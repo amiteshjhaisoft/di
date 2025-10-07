@@ -937,25 +937,36 @@ def settings_defaults():
 # -------------------------------------------------------------------
 # Auto-index (renders status inline on RHS) — NO st.status (no white pill)
 # -------------------------------------------------------------------
-def auto_index_if_needed(status_placeholder=None):
+from typing import Optional
+
+def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optional["chromadb.Client"]:
+    """
+    Ensure the local Knowledge Base is indexed in Chroma when needed.
+    - Returns a chromadb client if available (and indexing attempted or skipped),
+      or None if Chroma is unavailable.
+    - Shows a Streamlit warning if Chroma initialization fails (so UI doesn't crash).
+    """
     folder = st.session_state["base_folder"]
     persist = st.session_state["persist_dir"]
     colname = st.session_state["collection_name"]
     emb_model = st.session_state["emb_model"]
     min_gap = int(st.session_state.get("auto_index_min_interval_sec", 8))
 
-try:
-    client = get_chroma_client(persist)
-except Exception as e:
-    # If Chroma initialization fails, show a user-facing warning and skip auto-indexing.
-    # The detailed traceback is logged to /tmp/chroma-init-error.log by get_chroma_client.
+    # Try to get Chroma client; if it fails, warn user and skip auto-indexing.
     try:
-        st.warning(f"Chroma unavailable or failed to initialize: {e}. RAG features will be disabled. Check logs (/tmp/chroma-init-error.log) for details.")
-    except Exception:
-        pass
-    # return None
+        client = get_chroma_client(persist)
+    except Exception as e:
+        try:
+            st.warning(
+                f"Chroma unavailable or failed to initialize: {e}. "
+                "RAG features will be disabled. Check logs (/tmp/chroma-init-error.log) for details."
+            )
+        except Exception:
+            # Best-effort: don't let UI warnings raise further errors.
+            pass
+        return None
 
-
+    # compute a signature for the KB (files + contents) to decide if re-index is needed
     sig_now, file_count = compute_kb_signature(folder)
     last_sig = st.session_state.get("_kb_last_sig")
     last_time = float(st.session_state.get("_kb_last_index_ts", 0.0))
@@ -968,25 +979,36 @@ except Exception as e:
 
     if need_index and not throttled:
         try:
+            # show status and run the indexing routine (index_folder should be defined elsewhere)
+            target.markdown('<div class="status-inline">Indexing…</div>', unsafe_allow_html=True)
             n_docs, n_chunks = index_folder(
-                folder=folder, client=client, collection_name=colname,
-                embedding_model=emb_model, chunk_cfg=st.session_state["chunk_cfg"],
+                folder=folder,
+                client=client,
+                collection_name=colname,
+                embedding_model=emb_model,
+                chunk_cfg=st.session_state["chunk_cfg"],
             )
+
+            # update session state bookkeeping
             st.session_state["_kb_last_sig"] = sig_now
             st.session_state["_kb_last_index_ts"] = now
             st.session_state["_kb_last_counts"] = {"files": file_count, "docs": n_docs, "chunks": n_chunks}
             label = f"Indexed: <b>{n_docs}</b> files processed, <b>{n_chunks}</b> chunks"
         except Exception as e:
+            # keep the UI friendly — don't leak full tracebacks to users
             label = f"Auto-index failed: <b>{e}</b>"
+        # show final status (success or failure)
         target.markdown(f'<div class="status-inline">{label}</div>', unsafe_allow_html=True)
     else:
         ts = st.session_state.get("_kb_last_index_ts")
         when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else "—"
         target.markdown(
             f'<div class="status-inline">Auto-index is <b>ON</b> · Files: <b>{file_count}</b> · Last indexed: <b>{when}</b> · Collection: <code>{colname}</code></div>',
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
+
     return client
+
 
 # -------------------------------------------------------------------
 # Main
