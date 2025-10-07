@@ -309,8 +309,8 @@ def get_vectorstore(
 # ======================================================================
 # LLM selection + ConversationalRetrievalChain
 # ======================================================================
-DEFAULT_OLLAMA = "llama3.2"
-DEFAULT_CLAUDE = "claude-3-5-sonnet-20240620"
+DEFAULT_OLLAMA = "llama3.2:1b-instruct-q4_K_M"
+DEFAULT_CLAUDE = "claude-4-5"
 
 
 def make_llm(backend: str, model_name: str, temperature: float):
