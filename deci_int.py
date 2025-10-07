@@ -220,9 +220,19 @@ _EMB_MODEL_KW = {
     "trust_remote_code": False,
 }
 _ENCODE_KW = {
-    "normalize_embeddings": True,
-    "show_progress_bar": False,  # optional
+    "normalize_embeddings": True,  # OK to keep
+    # do NOT include show_progress_bar here
 }
+
+def _make_embeddings():
+    return HuggingFaceEmbeddings(
+        model_name=_EMB_MODEL,
+        model_kwargs=_EMB_MODEL_KW,
+        encode_kwargs=_ENCODE_KW,
+        # optionally control progress here (not in encode_kwargs):
+        # show_progress_bar=False,
+    )
+
 
 def _make_embeddings():
     return HuggingFaceEmbeddings(
