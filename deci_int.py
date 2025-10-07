@@ -2,30 +2,41 @@
 # LangChain refactor of your LLM chat + local RAG (Chroma) Streamlit app.
 # - Uses: Directory -> Loaders -> TextSplitter -> Embeddings -> Chroma -> ConversationalRetrievalChain
 # - LLMs: Claude (Anthropic) or local Ollama
+# - Robust to Chroma 0.5+ (persistent store, telemetry disabled, single instance)
 #
 # Install:
-#   pip install streamlit langchain langchain-community langchain-anthropic \
-#       chromadb sentence-transformers pypdf python-docx python-pptx openpyxl \
-#       beautifulsoup4 lxml anthropic
+#   pip install -r requirements.txt
 #
-# Run: streamlit run deci_int_langchain.py
+# Run:
+#   streamlit run deci_int_langchain.py
 #
-# Notes:
-# - Avoids heavy unstructured deps; graceful fallbacks used.
-# - Keeps auto-index-on-change behavior via folder signature.
-# - Preserves your sidebar settings + simple ChatGPT-style lane UI.
-# - Based on your earlier structure/features. (Ref: your deci_int.py).  # (citation req) 
+# Env (optional):
+#   ANTHROPIC_API_KEY         -> for Claude
+#   ISOFT_LOGO_PATH           -> path to iSOFT logo
+#   USER_AVATAR_PATH          -> override user avatar path
+#   ASSISTANT_AVATAR_PATH     -> override assistant avatar path
+#   (Ollama runs at http://localhost:11434)
 
 from __future__ import annotations
 
-import os, io, re, gc, glob, time, uuid, base64, hashlib, logging
+import os, io, re, gc, glob, time, uuid, base64, hashlib, logging, shutil
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Optional
 from pathlib import Path
 
 import streamlit as st
+import pandas as pd
 
-# ---- LangChain bits ---------------------------------------------------------
+# ---------------------------------------------------------------------
+# Chroma / Telemetry hygiene (quiet logs, disable OTel)
+# ---------------------------------------------------------------------
+os.environ.setdefault("CHROMA_TELEMETRY_IMPLEMENTATION", "none")
+os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+logging.getLogger("chromadb").setLevel(logging.WARNING)
+
+# ---------------------------------------------------------------------
+# LangChain bits
+# ---------------------------------------------------------------------
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -36,25 +47,22 @@ from langchain.memory import ConversationBufferMemory
 # LLMs
 from langchain_anthropic import ChatAnthropic
 try:
-    from langchain_community.chat_models import ChatOllama  # preferred
+    from langchain_community.chat_models import ChatOllama  # preferred newer import
 except Exception:
-    # fallback for older LangChain
     from langchain_community.llms import Ollama as ChatOllama
 
-# Loaders (prefer light deps; fallback to simple readers)
+# Loaders (lightweight set; fall back to manual readers where needed)
 from langchain_community.document_loaders import (
     TextLoader, PyPDFLoader, BSHTMLLoader, Docx2txtLoader, CSVLoader
 )
-
-import pandas as pd
 
 # ======================================================================
 # UI / THEME
 # ======================================================================
 st.set_page_config(page_title="LLM Chat • LangChain RAG", page_icon="💬", layout="wide")
-logging.getLogger("chromadb").setLevel(logging.WARNING)
 
-# ---- Branding helpers (same spirit as your app) -----------------------
+# ---- Branding helpers -------------------------------------------------
+
 def _resolve_logo_path() -> Optional[Path]:
     env_logo = os.getenv("ISOFT_LOGO_PATH")
     candidates = [
@@ -66,6 +74,7 @@ def _resolve_logo_path() -> Optional[Path]:
             return p
     return None
 
+
 def _resolve_avatar_paths() -> Tuple[Optional[Path], Optional[Path]]:
     env_user = os.getenv("USER_AVATAR_PATH")
     env_asst = os.getenv("ASSISTANT_AVATAR_PATH")
@@ -76,6 +85,7 @@ def _resolve_avatar_paths() -> Tuple[Optional[Path], Optional[Path]]:
     user = next((p for p in user_candidates if p and p.exists()), None)
     asst = next((p for p in asst_candidates if p and p.exists()), None)
     return user, asst
+
 
 def _img_to_data_uri(path: Optional[Path]) -> Optional[str]:
     if not path or not path.exists():
@@ -124,22 +134,27 @@ TEXT_EXTS = {".txt", ".md", ".rtf", ".html", ".htm", ".json", ".xml"}
 DOC_EXTS  = {".pdf", ".docx", ".csv", ".tsv", ".xlsx", ".xlsm", ".xltx", ".pptx"}
 SUPPORTED_EXTS = TEXT_EXTS | DOC_EXTS
 
+
 def get_kb_dir() -> str:
     kb = os.path.abspath(os.path.join(".", "KB"))
     os.makedirs(kb, exist_ok=True)
     return kb
 
+
 def human_time(ms: float) -> str:
     return f"{ms:.0f} ms" if ms < 1000 else f"{ms/1000:.2f} s"
 
+
 def stable_hash(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:12]
+
 
 def iter_files(folder: str) -> List[str]:
     paths: List[str] = []
     for ext in SUPPORTED_EXTS:
         paths.extend(glob.glob(os.path.join(folder, f"**/*{ext}"), recursive=True))
     return sorted(list(set(paths)))
+
 
 def compute_kb_signature(folder: str) -> Tuple[str, int]:
     files = iter_files(folder)
@@ -159,8 +174,9 @@ def compute_kb_signature(folder: str) -> Tuple[str, int]:
 # ======================================================================
 # File -> Documents (LangChain loaders + safe fallbacks)
 # ======================================================================
+
 def _fallback_read(path: str) -> str:
-    # Texty best-effort (keeps us independent of many extras)
+    # Texty best-effort (avoids heavy unstructured deps)
     try:
         if path.lower().endswith((".xlsx", ".xlsm", ".xltx")):
             df = pd.read_excel(path)
@@ -169,7 +185,6 @@ def _fallback_read(path: str) -> str:
             body = "\n".join(" | ".join(row) for row in df.values.tolist())
             return f"{header}\n{body}"
         if path.lower().endswith((".csv", ".tsv")):
-            # if CSVLoader fails, we’ll end up here
             df = pd.read_csv(path, sep="\t" if path.lower().endswith(".tsv") else ",")
             df = df.astype(str).iloc[:1000, :50]
             header = " | ".join(df.columns.tolist())
@@ -181,6 +196,7 @@ def _fallback_read(path: str) -> str:
             return Path(path).read_bytes().decode("utf-8", errors="ignore")
         except Exception:
             return ""
+
 
 def load_one(path: str) -> List[Document]:
     p = path.lower()
@@ -196,12 +212,10 @@ def load_one(path: str) -> List[Document]:
         if p.endswith(".tsv"):
             return CSVLoader(path, csv_args={"delimiter": "\t"}).load()
         if p.endswith((".txt", ".md", ".json", ".xml", ".rtf", ".pptx", ".xlsx", ".xlsm", ".xltx")):
-            # No first-class loader → fallback to text
             txt = _fallback_read(path)
             if not txt.strip():
                 return []
             return [Document(page_content=txt, metadata={"source": path})]
-        # Unknown extension → fallback
         txt = _fallback_read(path)
         if not txt.strip():
             return []
@@ -212,6 +226,7 @@ def load_one(path: str) -> List[Document]:
             return []
         return [Document(page_content=txt, metadata={"source": path})]
 
+
 def load_documents(folder: str) -> List[Document]:
     docs: List[Document] = []
     for path in iter_files(folder):
@@ -221,10 +236,12 @@ def load_documents(folder: str) -> List[Document]:
 # ======================================================================
 # Indexing: TextSplitter + Embeddings + Chroma (via LangChain)
 # ======================================================================
+
 @dataclass
 class ChunkingConfig:
     chunk_size: int = 1200
     chunk_overlap: int = 200
+
 
 def index_folder_langchain(
     folder: str,
@@ -259,29 +276,38 @@ def index_folder_langchain(
     gc.collect()
     return (len(raw_docs), len(splat))
 
+
 def get_vectorstore(
     persist_dir: str,
     collection_name: str,
     emb_model: str,
 ) -> Chroma:
+    # Cache LangChain VectorStore in session (prevents repeated instantiation issues)
+    key = f"_vs::{persist_dir}::{collection_name}::{emb_model}"
+    if key in st.session_state:
+        return st.session_state[key]
     embeddings = HuggingFaceEmbeddings(model_name=emb_model)
-    return Chroma(
+    vs = Chroma(
         collection_name=collection_name,
         persist_directory=persist_dir,
         embedding_function=embeddings,
     )
+    st.session_state[key] = vs
+    return vs
 
 # ======================================================================
 # LLM selection + ConversationalRetrievalChain
 # ======================================================================
 DEFAULT_OLLAMA = "llama3.2"
-DEFAULT_CLAUDE = "claude-3-5-sonnet-20240620"  # or your preferred Claude SKU
+DEFAULT_CLAUDE = "claude-3-5-sonnet-20240620"
+
 
 def make_llm(backend: str, model_name: str, temperature: float):
     if backend.startswith("Claude"):
         return ChatAnthropic(model=model_name, temperature=temperature, max_tokens=800)
-    # Ollama
+    # Ollama (local)
     return ChatOllama(model=model_name, temperature=temperature)
+
 
 def make_chain(vs: Chroma, llm, k: int):
     retriever = vs.as_retriever(search_kwargs={"k": k})
@@ -298,6 +324,7 @@ def make_chain(vs: Chroma, llm, k: int):
 # ======================================================================
 # Settings defaults + Auto-index-or-refresh (signature-based)
 # ======================================================================
+
 def settings_defaults():
     kb_dir = get_kb_dir()
     return {
@@ -313,6 +340,7 @@ def settings_defaults():
         "top_k": 5,
         "auto_index_min_interval_sec": 8,
     }
+
 
 def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optional[Chroma]:
     folder = st.session_state.get("base_folder")
@@ -366,6 +394,7 @@ def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optiona
 # ======================================================================
 # Main App
 # ======================================================================
+
 def main():
     # Defaults
     for k, v in settings_defaults().items():
@@ -374,11 +403,14 @@ def main():
     # Sidebar
     with st.sidebar:
         lp = _resolve_logo_path()
-        if lp:
+        if lp and Path(lp).exists():
             try:
-                st.image(str(lp), caption="iSOFT ANZ Pvt Ltd", use_container_width=True)
+                # use explicit width to avoid unknown kw issues
+                st.image(str(lp), caption="iSOFT ANZ Pvt Ltd", width=240)
             except Exception:
                 pass
+        else:
+            st.info("Add assets/isoft_logo.png for branding.")
 
         st.subheader("⚙️ Settings")
         st.caption("Auto-index is enabled. Edit paths/models below if needed.")
@@ -447,12 +479,18 @@ def main():
 
         if vs is None:
             st.session_state["messages"].append({"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."})
+            st.session_state["compose_input"] = ""
             st.rerun()
 
         # LLM
         backend = st.session_state["backend"]
         model_name = st.session_state["claude_model"] if backend.startswith("Claude") else st.session_state["ollama_model"]
-        llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
+        try:
+            llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
+        except Exception as e:
+            st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
+            st.session_state["compose_input"] = ""
+            st.rerun()
 
         # Chain
         chain = make_chain(vs, llm, int(st.session_state["top_k"]))
@@ -473,6 +511,7 @@ def main():
         st.session_state["messages"].append({"role": "assistant", "content": msg})
         st.session_state["compose_input"] = ""
         st.rerun()
+
 
 if __name__ == "__main__":
     main()
