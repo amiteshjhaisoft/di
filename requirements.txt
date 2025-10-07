@@ -1,4 +1,4 @@
-# ---- Core scientific stack (Py 3.12 compatible) ----
+# ---- Core scientific stack (Py 3.12) ----
 numpy==1.26.4
 pandas==2.3.2
 matplotlib==3.9.4
@@ -8,7 +8,7 @@ pmdarima==2.0.4
 
 # ---- App / CLI UX ----
 streamlit==1.39.1
-rich==14.1.0
+rich==13.7.1   # streamlit<1.40 requires rich < 14
 
 # ---- LLM / tooling ----
 tiktoken==0.7.0
