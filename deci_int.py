@@ -179,8 +179,7 @@ def compute_kb_signature(folder: str) -> Tuple[str, int]:
         except Exception:
             continue
     lines.sort()
-    raw = "
-".join(lines)
+    raw = "\n".join(lines)
     return stable_hash(raw if raw else f"EMPTY-{time.time()}"), len(files)
 
 # ======================================================================
@@ -194,18 +193,14 @@ def _fallback_read(path: str) -> str:
             df = pd.read_excel(path)
             df = df.astype(str).iloc[:1000, :50]
             header = " | ".join(df.columns.tolist())
-            body = "
-".join(" | ".join(row) for row in df.values.tolist())
-            return f"{header}
-{body}"
+            body = "\n".join(" | ".join(row) for row in df.values.tolist())
+            return f"{header}\n{body}"
         if path.lower().endswith((".csv", ".tsv")):
-            df = pd.read_csv(path, sep="	" if path.lower().endswith(".tsv") else ",")
+            df = pd.read_csv(path, sep="\t" if path.lower().endswith(".tsv") else ",")
             df = df.astype(str).iloc[:1000, :50]
             header = " | ".join(df.columns.tolist())
-            body = "
-".join(" | ".join(row) for row in df.values.tolist())
-            return f"{header}
-{body}"
+            body = "\n".join(" | ".join(row) for row in df.values.tolist())
+            return f"{header}\n{body}"
         return Path(path).read_text(encoding="utf-8", errors="ignore")
     except Exception:
         try:
@@ -226,7 +221,7 @@ def load_one(path: str) -> List[Document]:
         if p.endswith(".csv"):
             return CSVLoader(path).load()
         if p.endswith(".tsv"):
-            return CSVLoader(path, csv_args={"delimiter": "	"}).load()
+            return CSVLoader(path, csv_args={"delimiter": "\t"}).load()
         if p.endswith((".txt", ".md", ".json", ".xml", ".rtf", ".pptx", ".xlsx", ".xlsm", ".xltx")):
             txt = _fallback_read(path)
             if not txt.strip():
@@ -276,10 +271,7 @@ def index_folder_langchain(
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_cfg.chunk_size,
         chunk_overlap=chunk_cfg.chunk_overlap,
-        separators=["
-
-", "
-", ". ", " "],
+        separators=["\n\n", "\n", ". ", " "],
     )
     splat = splitter.split_documents(raw_docs)
 
@@ -536,14 +528,8 @@ def main():
             for i, d in enumerate(sources, start=1):
                 src = (d.metadata or {}).get("source", "unknown")
                 cited.append(f"[{i}] {src}")
-            citation_block = ("
-
-Sources:
-" + "
-".join(cited)) if cited else ""
-            msg = f"{answer}{citation_block}
-
-_(Answered in {human_time((time.time()-t0)*1000)})_"
+            citation_block = ("\n\nSources:\n" + "\n".join(cited)) if cited else ""
+            msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
         except Exception as e:
             msg = f"RAG error: {e}"
         st.session_state["messages"].append({"role": "assistant", "content": msg})
