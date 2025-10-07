@@ -1,5 +1,5 @@
 # Author: Amitesh Jha | iSoft | 2025-10-07
-# Streamlit + LangChain RAG app — hardened Anthropic init and CPU-safe embeddings.
+# Streamlit + LangChain RAG app — CPU-safe embeddings + Anthropic proxies-proof init.
 
 from __future__ import annotations
 import os, glob, time, base64, hashlib, logging
@@ -20,6 +20,18 @@ os.environ.setdefault("CHROMA_TELEMETRY_IMPLEMENTATION", "none")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 logging.getLogger("chromadb").setLevel(logging.WARNING)
 
+# import re  # if not already imported
+
+# GREETING_RE = re.compile(
+#     r"^\s*(hi|hello|hey|yo|hola|namaste|hiya|hi there|hello there|good\s+(morning|afternoon|evening))[\s!,.?]*$",
+#     re.IGNORECASE,
+# )
+
+# def is_greeting(text: str) -> bool:
+#     t = (text or "").strip()
+#     # keep it strict so normal questions don't hit this path
+#     return len(t) <= 40 and bool(GREETING_RE.match(t))
+
 # LangChain bits
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -28,10 +40,12 @@ from langchain.schema import Document
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 
-# LLMs
-from langchain_anthropic import ChatAnthropic
 
-# Prefer Anthropic(new) but fallback to Client(old) if needed
+
+# DO NOT import ChatAnthropic (prevents any path that might add proxies=...)
+# from langchain_anthropic import ChatAnthropic
+
+# Anthropic SDK (new & old)
 try:
     from anthropic import Anthropic as _AnthropicClientNew
 except Exception:
@@ -50,6 +64,86 @@ from langchain_community.document_loaders import (
     PyPDFLoader, BSHTMLLoader, Docx2txtLoader, CSVLoader
 )
 
+# --------------------- Minimal direct Claude model (bypass proxies kw path) ---------------------
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+
+class ClaudeDirect(BaseChatModel):
+    model: str = "claude-sonnet-4-5"   # valid model id
+    temperature: float = 0.2
+    max_tokens: int = 800
+    _client: object = None  # Anthropic client set at init
+
+    def __init__(self, client, **kwargs):
+        super().__init__(**kwargs)
+        object.__setattr__(self, "_client", client)
+
+    @property
+    def _llm_type(self) -> str:
+        return "claude_direct"
+
+    def _convert_msgs(self, messages: list[BaseMessage]):
+        out = []
+        for m in messages:
+            role = "user" if m.type == "human" else ("assistant" if m.type == "ai" else "user")
+            if isinstance(m.content, str):
+                text = m.content
+            else:
+                parts = m.content or []
+                text = "".join(p.get("text","") if isinstance(p, dict) else str(p) for p in parts)
+            out.append({"role": role, "content": [{"type": "text", "text": text}]})
+        return out
+
+    def _generate(self, messages: list[BaseMessage], stop=None, run_manager=None, **kwargs) -> ChatResult:
+        amsgs = self._convert_msgs(messages)
+        resp = self._client.messages.create(
+            model=self.model,
+            messages=amsgs,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        )
+        text = ""
+        content = getattr(resp, "content", []) or []
+        for blk in content:
+            # new SDK returns objects with .type/.text; some environments return dicts
+            if getattr(blk, "type", None) == "text":
+                text += getattr(blk, "text", "") or ""
+            elif isinstance(blk, dict) and blk.get("type") == "text":
+                text += blk.get("text", "") or ""
+        ai = AIMessage(content=text)
+        return ChatResult(generations=[ChatGeneration(message=ai)])
+
+from pathlib import Path
+from collections import Counter
+
+def build_citation_block(source_docs, kb_root: str | None = None) -> str:
+    names = []
+    for d in source_docs or []:
+        meta = getattr(d, "metadata", {}) or {}
+        src = meta.get("source", "unknown")
+
+        # Prefer path relative to KB; otherwise, just the filename
+        try:
+            if kb_root:
+                rel = Path(src).resolve().relative_to(Path(kb_root).resolve())
+                display = str(rel)
+            else:
+                display = Path(src).name
+        except Exception:
+            display = Path(src).name
+
+        names.append(display)
+
+    if not names:
+        return ""
+
+    counts = Counter(names)
+    lines = [f"- {name}" + (f" ×{n}" if n > 1 else "") for name, n in counts.items()]
+    return "\n\n**Sources**\n" + "\n".join(lines)
+
+
+# --------------------- UI / THEME ---------------------
 st.set_page_config(page_title="LLM Chat • LangChain RAG", page_icon="💬", layout="wide")
 
 def _resolve_logo_path() -> Optional[Path]:
@@ -66,7 +160,7 @@ def _resolve_avatar_paths() -> Tuple[Optional[Path], Optional[Path]]:
     env_asst = os.getenv("ASSISTANT_AVATAR_PATH")
     user_candidates = [Path.cwd() / "assets" / "avatar.png",
                        Path(env_user).expanduser().resolve() if env_user else None]
-    asst_candidates = [Path.cwd() / "assets" / "Forecast360.png",
+    asst_candidates = [Path.cwd() / "assets" / "llm.png",
                        Path(env_asst).expanduser().resolve() if env_asst else None]
     user = next((p for p in user_candidates if p and p.exists()), None)
     asst = next((p for p in asst_candidates if p and p.exists()), None)
@@ -80,29 +174,44 @@ def _img_to_data_uri(path: Optional[Path]) -> Optional[str]:
     mime = "image/png" if ext in ("png", "apng") else ("image/jpeg" if ext in ("jpg", "jpeg") else "image/svg+xml")
     return f"data:{mime};base64,{b64}"
 
+# Resolve avatars before CSS
 USER_AVATAR_PATH, ASSIST_AVATAR_PATH = _resolve_avatar_paths()
 USER_AVATAR_URI = _img_to_data_uri(USER_AVATAR_PATH)
 ASSIST_AVATAR_URI = _img_to_data_uri(ASSIST_AVATAR_PATH)
 
-st.markdown(f"""
+user_bg  = f"background-image:url('{USER_AVATAR_URI}');" if USER_AVATAR_URI else ""
+asst_bg  = f"background-image:url('{ASSIST_AVATAR_URI}');" if ASSIST_AVATAR_URI else ""
+
+css = """
 <style>
-:root{{ --bg:#f7f8fb; --sidebar-bg:#f5f7fb; --panel:#fff; --text:#0b1220; --border:#e7eaf2; --bubble-user:#eef4ff; --bubble-assist:#f6f7fb; }}
+:root{{ 
+  --bg:#f7f8fb; --sidebar-bg:#f5f7fb; --panel:#fff; --text:#0b1220;
+  --muted:#5d6b82; --accent:#2563eb; --border:#e7eaf2;
+  --bubble-user:#eef4ff; --bubble-assist:#f6f7fb;
+}}
 html, body, [data-testid="stAppViewContainer"]{{ background:var(--bg); color:var(--text); }}
 section[data-testid="stSidebar"]{{ background:var(--sidebar-bg); border-right:1px solid var(--border); }}
 main .block-container{{ padding-top:.6rem; }}
+.container-narrow{{ max-width:1080px; margin:0 auto; }}
 .chat-card{{ background:var(--panel); border:1px solid var(--border); border-radius:14px; box-shadow:0 6px 16px rgba(16,24,40,.05); overflow:hidden; }}
-.chat-scroll{{ max-height:58vh; overflow:auto; padding:.65rem .9rem; }}
-.msg{{ display:flex; gap:.65rem; margin:.45rem 0; }}
-.avatar{{ width:32px; height:32px; border-radius:50%; border:1px solid var(--border); background-size:cover; background-position:center; flex:0 0 32px; }}
-.avatar.user {{ {"background-image:url('" + USER_AVATAR_URI + "');" if USER_AVATAR_URI else ""} }}
-.avatar.assistant {{ {"background-image:url('" + ASSIST_AVATAR_URI + "');" if ASSIST_AVATAR_URI else ""} }}
+.chat-scroll{{ max-height: 58vh; overflow:auto; padding:.65rem .9rem; }}
+.msg{{ display:flex; align-items:flex-start; gap:.65rem; margin:.45rem 0; }}
+.avatar{{ width:32px; height:32px; border-radius:50%; border:1px solid var(--border); background-size:cover; background-position:center; background-repeat:no-repeat; flex:0 0 32px; }}
+.avatar.user {{
+  {user_bg}
+}}
+.avatar.assistant {{
+  {asst_bg}
+}}
 .bubble{{ border:1px solid var(--border); background:var(--bubble-assist); padding:.8rem .95rem; border-radius:12px; max-width:860px; white-space:pre-wrap; line-height:1.45; }}
 .msg.user .bubble{{ background:var(--bubble-user); }}
 .composer{{ padding:.6rem .75rem; border-top:1px solid var(--border); background:#fff; position:sticky; bottom:0; z-index:2; }}
 .status-inline{{ width:100%; border:1px solid var(--border); background:#fafcff; border-radius:10px; padding:.5rem .7rem; font-size:.9rem; color:#111827; margin:.5rem 0 .8rem; }}
-.smallcaps{ font-variant: all-small-caps; color:#475569; }
+.smallcaps{{ font-variant: all-small-caps; color:#475569; }}
 </style>
-""", unsafe_allow_html=True)
+""".format(user_bg=user_bg, asst_bg=asst_bg)
+
+st.markdown(css, unsafe_allow_html=True)
 
 # --------------------- Helpers ---------------------
 TEXT_EXTS = {".txt", ".md", ".rtf", ".html", ".htm", ".json", ".xml"}
@@ -202,13 +311,17 @@ _EMB_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 _EMB_MODEL_KW = {
     "device": "cpu",
     "trust_remote_code": False,
-    "torch_dtype": "float32",
 }
-_ENCODE_KW = {"normalize_embeddings": True}
+_ENCODE_KW = {
+    "normalize_embeddings": True,
+}
 
 def _make_embeddings():
-    # Force CPU + float32 so we never move from meta tensors
-    return HuggingFaceEmbeddings(model_name=_EMB_MODEL, model_kwargs=_EMB_MODEL_KW, encode_kwargs=_ENCODE_KW)
+    return HuggingFaceEmbeddings(
+        model_name=_EMB_MODEL,
+        model_kwargs=_EMB_MODEL_KW,
+        encode_kwargs=_ENCODE_KW,
+    )
 
 def index_folder_langchain(folder: str, persist_dir: str, collection_name: str, emb_model: str, chunk_cfg: ChunkingConfig) -> Tuple[int, int]:
     raw_docs = load_documents(folder)
@@ -231,17 +344,34 @@ def get_vectorstore(persist_dir: str, collection_name: str, emb_model: str) -> C
 
 # --------------------- Anthropic init helpers ---------------------
 def _strip_proxy_env() -> None:
-    for v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+    for v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "NO_PROXY", "no_proxy"):
         os.environ.pop(v, None)
 
 def _get_secret_api_key() -> Optional[str]:
-    for k in ("ANTHROPIC_API_KEY", "anthropic_api_key", "claude_api_key"):
-        try:
-            if k in st.secrets:
-                return st.secrets[k]
-        except Exception:
-            pass
-    return os.getenv("ANTHROPIC_API_KEY")
+    # robust: flat and nested
+    try:
+        s = st.secrets
+    except Exception:
+        s = None
+
+    if s:
+        for k in ("ANTHROPIC_API_KEY","anthropic_api_key","CLAUDE_API_KEY","claude_api_key"):
+            v = s.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        for parent in ("anthropic","claude","secrets"):
+            if parent in s and isinstance(s[parent], dict):
+                ns = s[parent]
+                for k in ("api_key","ANTHROPIC_API_KEY","key","token"):
+                    v = ns.get(k)
+                    if isinstance(v, str) and v.strip():
+                        return v.strip()
+
+    for k in ("ANTHROPIC_API_KEY","anthropic_api_key","CLAUDE_API_KEY","claude_api_key"):
+        v = os.getenv(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
 
 def _anthropic_client_from_secrets():
     _strip_proxy_env()
@@ -261,14 +391,32 @@ DEFAULT_CLAUDE = "claude-sonnet-4-5"
 
 def make_llm(backend: str, model_name: str, temperature: float):
     if backend.startswith("Claude"):
+        # Always bypass ChatAnthropic to avoid any proxies kw path
         client = _anthropic_client_from_secrets()
-        return ChatAnthropic(client=client, model=model_name, temperature=temperature, max_tokens=800)
-    return ChatOllama(model=model_name, temperature=temperature)
+        return ClaudeDirect(
+            client=client,
+            model=model_name or DEFAULT_CLAUDE,
+            temperature=temperature,
+            max_tokens=800,
+        )
+    return ChatOllama(model=model_name or DEFAULT_OLLAMA, temperature=temperature)
 
 def make_chain(vs: Chroma, llm, k: int):
     retriever = vs.as_retriever(search_kwargs={"k": k})
-    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-    return ConversationalRetrievalChain.from_llm(llm=llm, retriever=retriever, memory=memory, return_source_documents=True, verbose=False)
+    # Tell memory which output field to capture
+    memory = ConversationBufferMemory(
+        memory_key="chat_history",
+        output_key="answer",        # <-- key fix
+        return_messages=True
+    )
+    return ConversationalRetrievalChain.from_llm(
+        llm=llm,
+        retriever=retriever,
+        memory=memory,
+        return_source_documents=True,
+        verbose=False,
+    )
+
 
 # --------------------- Defaults + auto-index ---------------------
 def settings_defaults():
@@ -325,10 +473,112 @@ def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optiona
         return None
 
 # --------------------- Main ---------------------
+# def main():
+#     for k, v in settings_defaults().items():
+#         st.session_state.setdefault(k, v)
+
+#     with st.sidebar:
+#         lp = _resolve_logo_path()
+#         if lp and Path(lp).exists():
+#             try:
+#                 st.image(str(lp), caption="iSOFT ANZ Pvt Ltd", width=240)
+#             except Exception:
+#                 pass
+#         else:
+#             st.info("Add assets/isoft_logo.png for branding.")
+
+#         st.subheader("⚙️ Settings")
+#         st.caption("Auto-index is enabled. Edit paths/models below if needed.")
+
+#         st.session_state["base_folder"] = st.text_input("Knowledge Base", value=st.session_state["base_folder"])
+#         st.session_state["persist_dir"] = st.text_input("Chroma persist", value=st.session_state["persist_dir"])
+#         st.session_state["collection_name"] = st.text_input("Collection", value=st.session_state["collection_name"])
+
+#         st.session_state["backend"] = st.radio("LLM", ["Claude (Anthropic)", "Ollama (local)"], index=0)
+#         if st.session_state["backend"].startswith("Claude"):
+#             st.session_state["claude_model"] = st.text_input("Claude model", value=st.session_state["claude_model"])
+#         else:
+#             st.session_state["ollama_model"] = st.text_input("Ollama model", value=st.session_state["ollama_model"])
+
+#         st.session_state["temperature"] = st.slider("Temperature", 0.0, 1.0, 0.2, 0.05)
+#         st.session_state["top_k"] = st.slider("Top-K", 1, 15, 5)
+#         st.session_state["auto_index_min_interval_sec"] = st.number_input("Auto-index min interval (sec)", min_value=1, max_value=300, value=8, step=1)
+
+#         try:
+#             import anthropic as _anth
+#             st.caption(f"anthropic=={getattr(_anth, '__version__', 'unknown')} • direct client mode")
+#         except Exception:
+#             st.caption("anthropic not importable")
+
+#     st.markdown("### 💬 Chat with your Knowledge Base (LangChain RAG)")
+#     hero_status = st.container()
+#     vs = auto_index_if_needed(status_placeholder=hero_status)
+
+#     st.session_state.setdefault("messages", [{"role": "assistant", "content": "Hi! Ask anything about your Knowledge Base."}])
+
+#     st.markdown('<div class="chat-card">', unsafe_allow_html=True)
+#     st.markdown('<div class="chat-scroll">', unsafe_allow_html=True)
+#     for m in st.session_state["messages"]:
+#         who = "user" if m["role"] == "user" else "assistant"
+#         st.markdown(f'<div class="msg {who}"><div class="avatar {who}"></div><div class="bubble">{m["content"]}</div></div>', unsafe_allow_html=True)
+#     st.markdown("</div>", unsafe_allow_html=True)
+
+#     st.session_state.setdefault("_compose_nonce", 0)
+#     compose_key = f"compose_input_{st.session_state['_compose_nonce']}"
+
+#     st.markdown('<div class="composer">', unsafe_allow_html=True)
+#     c1, c2 = st.columns([1, 0.2])
+#     with c1:
+#         user_text = st.text_area("Message", key=compose_key, placeholder="Type your question…", label_visibility="collapsed")
+#     with c2:
+#         send = st.button("Send", use_container_width=True)
+#     st.markdown("</div>", unsafe_allow_html=True)
+#     st.markdown("</div>", unsafe_allow_html=True)
+
+#     if send and user_text and user_text.strip():
+#         query = user_text.strip()
+#         st.session_state["messages"].append({"role": "user", "content": query})
+
+#         if vs is None:
+#             st.session_state["messages"].append({"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."})
+#             st.session_state["_compose_nonce"] += 1
+#             st.rerun()
+
+#         backend = st.session_state["backend"]
+#         model_name = st.session_state["claude_model"] if backend.startswith("Claude") else st.session_state["ollama_model"]
+#         try:
+#             llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
+#         except Exception as e:
+#             st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
+#             st.session_state["_compose_nonce"] += 1
+#             st.rerun()
+
+#         chain = make_chain(vs, llm, int(st.session_state["top_k"]))
+
+#         t0 = time.time()
+#         try:
+#             result = chain.invoke({"question": query})
+#             answer = result.get("answer", "").strip() or "(no answer)"
+#             sources = result.get("source_documents", []) or []
+#             cited = []
+#             for i, d in enumerate(sources, start=1):
+#                 src = (d.metadata or {}).get("source", "unknown")
+#                 cited.append(f"[{i}] {src}")
+#             citation_block = ("\n\nSources:\n" + "\n".join(cited)) if cited else ""
+#             msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
+#         except Exception as e:
+#             msg = f"RAG error: {e}"
+#         st.session_state["messages"].append({"role": "assistant", "content": msg})
+#         st.session_state["_compose_nonce"] += 1
+#         st.rerun()
+
+# # --------------------- Main ---------------------
 def main():
+    # Defaults
     for k, v in settings_defaults().items():
         st.session_state.setdefault(k, v)
 
+    # Sidebar
     with st.sidebar:
         lp = _resolve_logo_path()
         if lp and Path(lp).exists():
@@ -342,62 +592,137 @@ def main():
         st.subheader("⚙️ Settings")
         st.caption("Auto-index is enabled. Edit paths/models below if needed.")
 
-        st.session_state["base_folder"] = st.text_input("Knowledge Base", value=st.session_state["base_folder"])
-        st.session_state["persist_dir"] = st.text_input("Chroma persist", value=st.session_state["persist_dir"])
-        st.session_state["collection_name"] = st.text_input("Collection", value=st.session_state["collection_name"])
+        st.session_state["base_folder"] = st.text_input(
+            "Knowledge Base", value=st.session_state["base_folder"]
+        )
+        st.session_state["persist_dir"] = st.text_input(
+            "Chroma persist", value=st.session_state["persist_dir"]
+        )
+        st.session_state["collection_name"] = st.text_input(
+            "Collection", value=st.session_state["collection_name"]
+        )
 
-        st.session_state["backend"] = st.radio("LLM", ["Claude (Anthropic)", "Ollama (local)"], index=0)
+        st.session_state["backend"] = st.radio(
+            "LLM", ["Claude (Anthropic)", "Ollama (local)"], index=0
+        )
         if st.session_state["backend"].startswith("Claude"):
-            st.session_state["claude_model"] = st.text_input("Claude model", value=st.session_state["claude_model"])
+            st.session_state["claude_model"] = st.text_input(
+                "Claude model", value=st.session_state["claude_model"]
+            )
         else:
-            st.session_state["ollama_model"] = st.text_input("Ollama model", value=st.session_state["ollama_model"])
+            st.session_state["ollama_model"] = st.text_input(
+                "Ollama model", value=st.session_state["ollama_model"]
+            )
 
-        st.session_state["temperature"] = st.slider("Temperature", 0.0, 1.0, 0.2, 0.05)
+        st.session_state["temperature"] = st.slider(
+            "Temperature", 0.0, 1.0, 0.2, 0.05
+        )
         st.session_state["top_k"] = st.slider("Top-K", 1, 15, 5)
-        st.session_state["auto_index_min_interval_sec"] = st.number_input("Auto-index min interval (sec)", min_value=1, max_value=300, value=8, step=1)
+        st.session_state["auto_index_min_interval_sec"] = st.number_input(
+            "Auto-index min interval (sec)", min_value=1, max_value=300, value=8, step=1
+        )
 
         try:
             import anthropic as _anth
-            st.caption(f"anthropic=={getattr(_anth, '__version__', 'unknown')} • langchain-anthropic active")
+            st.caption(
+                f"anthropic=={getattr(_anth, '__version__', 'unknown')} • direct client mode"
+            )
         except Exception:
             st.caption("anthropic not importable")
 
+    # Title + status
     st.markdown("### 💬 Chat with your Knowledge Base (LangChain RAG)")
     hero_status = st.container()
     vs = auto_index_if_needed(status_placeholder=hero_status)
 
-    st.session_state.setdefault("messages", [{"role": "assistant", "content": "Hi! Ask anything about your Knowledge Base."}])
+    # Chat history
+    st.session_state.setdefault(
+        "messages",
+        [{"role": "assistant", "content": "Hi! Ask anything about your Knowledge Base."}],
+    )
 
+    # Chat lane
     st.markdown('<div class="chat-card">', unsafe_allow_html=True)
     st.markdown('<div class="chat-scroll">', unsafe_allow_html=True)
     for m in st.session_state["messages"]:
         who = "user" if m["role"] == "user" else "assistant"
-        st.markdown(f'<div class="msg {who}"><div class="avatar {who}"></div><div class="bubble">{m["content"]}</div></div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="msg {who}"><div class="avatar {who}"></div><div class="bubble">{m["content"]}</div></div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
 
+    # Composer
     st.session_state.setdefault("_compose_nonce", 0)
     compose_key = f"compose_input_{st.session_state['_compose_nonce']}"
-
     st.markdown('<div class="composer">', unsafe_allow_html=True)
     c1, c2 = st.columns([1, 0.2])
     with c1:
-        user_text = st.text_area("Message", key=compose_key, placeholder="Type your question…", label_visibility="collapsed")
+        user_text = st.text_area(
+            "Message", key=compose_key, placeholder="Type your question…", label_visibility="collapsed"
+        )
     with c2:
         send = st.button("Send", use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+   
+#     # Send handler
+#     if send and user_text and user_text.strip():
+#         query = user_text.strip()
+#         st.session_state["messages"].append({"role": "user", "content": query})
+    
+#         # --- Greeting short-circuit ----
+#         GREETING_RE = re.compile(
+#             r"^\s*(hi|hello|hey|yo|hola|namaste|hiya|hi there|hello there|"
+#             r"good\s+(morning|afternoon|evening))[\s!,.?]*$",
+#             re.IGNORECASE,
+#         )
+#         if len(query) <= 40 and GREETING_RE.match(query):
+#             st.session_state["messages"].append(
+#                 {"role": "assistant", "content": "Hello! How can I help you today?"}
+#             )
+#             st.session_state["_compose_nonce"] += 1
+#             st.rerun()
+#         # --------------------------------
+    
+#         if vs is None:
+#             st.session_state["messages"].append(
+#                 {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
+#             )
+#             st.session_state["_compose_nonce"] += 1
+#             st.rerun()
+    
+#         backend = st.session_state["backend"]
+#         model_name = (
+#             st.session_state["claude_model"]
+#             if backend.startswith("Claude")
+#             else st.session_state["ollama_model"]
+#         )
+#         try:
+#             llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
+#         except Exception as e:
+#             st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
+#             st.session_state["_compose_nonce"] += 1
+#             st.rerun()
 
     if send and user_text and user_text.strip():
         query = user_text.strip()
         st.session_state["messages"].append({"role": "user", "content": query})
 
         if vs is None:
-            st.session_state["messages"].append({"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."})
+            st.session_state["messages"].append(
+                {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
+            )
             st.session_state["_compose_nonce"] += 1
             st.rerun()
 
         backend = st.session_state["backend"]
-        model_name = st.session_state["claude_model"] if backend.startswith("Claude") else st.session_state["ollama_model"]
+        model_name = (
+            st.session_state["claude_model"]
+            if backend.startswith("Claude")
+            else st.session_state["ollama_model"]
+        )
         try:
             llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
         except Exception as e:
@@ -412,17 +737,22 @@ def main():
             result = chain.invoke({"question": query})
             answer = result.get("answer", "").strip() or "(no answer)"
             sources = result.get("source_documents", []) or []
-            cited = []
-            for i, d in enumerate(sources, start=1):
-                src = (d.metadata or {}).get("source", "unknown")
-                cited.append(f"[{i}] {src}")
-            citation_block = ("\n\nSources:\n" + "\n".join(cited)) if cited else ""
+
+            # Clean, de-duplicated, KB-relative source list
+            citation_block = ""  # hide sources from chat
+            # citation_block = build_citation_block(
+            #     sources, kb_root=st.session_state.get("base_folder")
+            # )
+
             msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
         except Exception as e:
             msg = f"RAG error: {e}"
+
         st.session_state["messages"].append({"role": "assistant", "content": msg})
+        # Clear text area by rotating the key
         st.session_state["_compose_nonce"] += 1
         st.rerun()
+
 
 if __name__ == "__main__":
     main()

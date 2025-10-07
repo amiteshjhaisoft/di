@@ -1,21 +1,24 @@
 # --- Core app ---
 streamlit==1.37.1
+rich==13.9.4  # streamlit 1.37 requires rich<14
 
 # --- LangChain stack (aligned pins) ---
 langchain==0.2.15
+langchain-core==0.2.37        # must be >=0.2.37 for langchain-community 0.2.15
 langchain-community==0.2.15
 langchain-anthropic==0.1.23
 anthropic==0.39.0
+httpx==0.27.2                 # Anthropic uses httpx; keep a stable version
 
 # --- Vector DB ---
 chromadb==0.5.5
 hnswlib==0.8.0
 
-# --- Embeddings ---
+# --- Embeddings / NLP ---
 sentence-transformers==2.7.0
 transformers==4.44.2
-# CPU build; if you have CUDA, replace with the appropriate torch extra (e.g., +cu121)
-torch>=2.1.0,<2.5
+torch==2.3.1                  # CPU wheel; stable on Linux/py3.12
+numpy<2.0                     # avoids native wheels compiled vs NumPy 1.x ABIs
 
 # --- Loaders / parsing ---
 pypdf==4.2.0
@@ -24,5 +27,5 @@ beautifulsoup4==4.12.3
 lxml==5.2.1
 pandas==2.2.2
 
-# --- Optional quality-of-life ---
+# --- QoL ---
 python-dotenv==1.0.1
