@@ -1,28 +1,15 @@
-# ---- Core ----
-streamlit>=1.36,<1.40         # resolves to 1.39.1
+# ---- Core scientific stack (Py 3.12 compatible) ----
+numpy==1.26.4
 pandas==2.3.2
-numpy==2.3.3
-pyarrow==18.1.0
-pillow==11.3.0
-python-dateutil==2.9.0.post0
-lxml==5.4.0
-openpyxl==3.1.5
-xlrd==2.0.2
-jsonschema==4.25.1
 matplotlib==3.9.4
-plotly==5.24.1
-
-# ---- Modeling ----
 scikit-learn==1.5.2
 statsmodels==0.14.5
 pmdarima==2.0.4
 
-# ---- LLM / DI ----
-openai==1.109.1
-anthropic==0.68.1
+# ---- App / CLI UX ----
+streamlit==1.39.1
+rich==14.1.0
+
+# ---- LLM / tooling ----
 tiktoken==0.7.0
 langchain==0.2.17
-langchain-community==0.2.19
-# faiss-cpu==1.9.0.post1        # <-- fix for Py 3.13
-pypdf==4.3.1
-markdown==3.6
