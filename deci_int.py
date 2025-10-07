@@ -27,6 +27,18 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
+import re  # if not already imported
+
+GREETING_RE = re.compile(
+    r"^\s*(hi|hello|hey|yo|hola|namaste|hiya|hi there|hello there|good\s+(morning|afternoon|evening))[\s!,.?]*$",
+    re.IGNORECASE,
+)
+
+def is_greeting(text: str) -> bool:
+    t = (text or "").strip()
+    # keep it strict so normal questions don't hit this path
+    return len(t) <= 40 and bool(GREETING_RE.match(t))
+
 
 # DO NOT import ChatAnthropic (prevents any path that might add proxies=...)
 # from langchain_anthropic import ChatAnthropic
@@ -653,52 +665,91 @@ def main():
     st.markdown("</div>", unsafe_allow_html=True)
 
     # Send handler
-    if send and user_text and user_text.strip():
-        query = user_text.strip()
-        st.session_state["messages"].append({"role": "user", "content": query})
+    # Send handler
+if send and user_text and user_text.strip():
+    query = user_text.strip()
+    st.session_state["messages"].append({"role": "user", "content": query})
 
-        if vs is None:
-            st.session_state["messages"].append(
-                {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
-            )
-            st.session_state["_compose_nonce"] += 1
-            st.rerun()
-
-        backend = st.session_state["backend"]
-        model_name = (
-            st.session_state["claude_model"]
-            if backend.startswith("Claude")
-            else st.session_state["ollama_model"]
+    # --- Greeting short-circuit ----
+    GREETING_RE = re.compile(
+        r"^\s*(hi|hello|hey|yo|hola|namaste|hiya|hi there|hello there|"
+        r"good\s+(morning|afternoon|evening))[\s!,.?]*$",
+        re.IGNORECASE,
+    )
+    if len(query) <= 40 and GREETING_RE.match(query):
+        st.session_state["messages"].append(
+            {"role": "assistant", "content": "Hello! How can I help you today?"}
         )
-        try:
-            llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
-        except Exception as e:
-            st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
-            st.session_state["_compose_nonce"] += 1
-            st.rerun()
-
-        chain = make_chain(vs, llm, int(st.session_state["top_k"]))
-
-        t0 = time.time()
-        try:
-            result = chain.invoke({"question": query})
-            answer = result.get("answer", "").strip() or "(no answer)"
-            sources = result.get("source_documents", []) or []
-
-            # Clean, de-duplicated, KB-relative source list
-            citation_block = ""  # hide sources from chat
-            # citation_block = build_citation_block(
-            #     sources, kb_root=st.session_state.get("base_folder")
-            # )
-
-            msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
-        except Exception as e:
-            msg = f"RAG error: {e}"
-
-        st.session_state["messages"].append({"role": "assistant", "content": msg})
-        # Clear text area by rotating the key
         st.session_state["_compose_nonce"] += 1
         st.rerun()
+    # --------------------------------
+
+    if vs is None:
+        st.session_state["messages"].append(
+            {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
+        )
+        st.session_state["_compose_nonce"] += 1
+        st.rerun()
+
+    backend = st.session_state["backend"]
+    model_name = (
+        st.session_state["claude_model"]
+        if backend.startswith("Claude")
+        else st.session_state["ollama_model"]
+    )
+    try:
+        llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
+    except Exception as e:
+        st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
+        st.session_state["_compose_nonce"] += 1
+        st.rerun()
+
+    # if send and user_text and user_text.strip():
+    #     query = user_text.strip()
+    #     st.session_state["messages"].append({"role": "user", "content": query})
+
+    #     if vs is None:
+    #         st.session_state["messages"].append(
+    #             {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
+    #         )
+    #         st.session_state["_compose_nonce"] += 1
+    #         st.rerun()
+
+    #     backend = st.session_state["backend"]
+    #     model_name = (
+    #         st.session_state["claude_model"]
+    #         if backend.startswith("Claude")
+    #         else st.session_state["ollama_model"]
+    #     )
+    #     try:
+    #         llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
+    #     except Exception as e:
+    #         st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
+    #         st.session_state["_compose_nonce"] += 1
+    #         st.rerun()
+
+    #     chain = make_chain(vs, llm, int(st.session_state["top_k"]))
+
+    #     t0 = time.time()
+    #     try:
+    #         result = chain.invoke({"question": query})
+    #         answer = result.get("answer", "").strip() or "(no answer)"
+    #         sources = result.get("source_documents", []) or []
+
+    #         # Clean, de-duplicated, KB-relative source list
+    #         citation_block = ""  # hide sources from chat
+    #         # citation_block = build_citation_block(
+    #         #     sources, kb_root=st.session_state.get("base_folder")
+    #         # )
+
+    #         msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
+    #     except Exception as e:
+    #         msg = f"RAG error: {e}"
+
+    #     st.session_state["messages"].append({"role": "assistant", "content": msg})
+    #     # Clear text area by rotating the key
+    #     st.session_state["_compose_nonce"] += 1
+    #     st.rerun()
 
 
 if __name__ == "__main__":
