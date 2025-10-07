@@ -633,15 +633,15 @@ def render_sidebar():
             "Auto-index min interval (sec)", min_value=1, max_value=300, value=8, step=1
         )
 
-        st.markdown(f"**Supported Document Types:** `{', '.join(sorted(SUPPORTED_TEXT_DOCS))}`")
-        st.markdown(f"**Media Files (Placeholder Only):** `{', '.join(sorted(IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS))}`")
+        # st.markdown(f"**Supported Document Types:** `{', '.join(sorted(SUPPORTED_TEXT_DOCS))}`")
+        # st.markdown(f"**Media Files (Placeholder Only):** `{', '.join(sorted(IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS))}`")
 
         # Anthropic status
-        try:
-            import anthropic as _anth
-            st.caption(f"anthropic=={getattr(_anth, '__version__', 'unknown')} • direct client mode")
-        except Exception:
-            st.caption("anthropic not importable")
+        # try:
+        #     import anthropic as _anth
+        #     st.caption(f"anthropic=={getattr(_anth, '__version__', 'unknown')} • direct client mode")
+        # except Exception:
+        #     st.caption("anthropic not importable")
 
 def render_chat_history():
     """Renders the chat history using st.chat_message."""
