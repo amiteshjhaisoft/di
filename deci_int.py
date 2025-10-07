@@ -128,8 +128,8 @@ def build_citation_block(source_docs: List[Document], kb_root: str | None = None
         names.append(display)
     counts = Counter(names)
     lines = [f"- {name}" + (f" ×{n}" if n > 1 else "") for name, n in counts.items()]
-    return "\n\n**Sources**\n" + "\n".join(lines)
-
+    # return "\n\n**Sources**\n" + "\n".join(lines)
+    return ""
 # --------------------- UI / THEME ---------------------
 st.set_page_config(page_title="LLM Chat • LangChain RAG", page_icon="💬", layout="wide")
 
