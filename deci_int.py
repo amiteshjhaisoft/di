@@ -839,9 +839,9 @@ def auto_index_if_needed(status_placeholder=None):
                 folder=folder, client=client, collection_name=colname,
                 embedding_model=emb_model, chunk_cfg=st.session_state["chunk_cfg"],
             )
-            st.session_state["_kb_last_sig"] = sig_now
-            st.session_state["_kb_last_index_ts"] = now
-            st.session_state["_kb_last_counts"] = {"files": file_count, "docs": n_docs, "chunks": n_chunks}
+    st.session_state["_kb_last_sig"] = sig_now
+    st.session_state["_kb_last_index_ts"] = now
+    st.session_state["_kb_last_counts"] = {"files": file_count, "docs": n_docs, "chunks": n_chunks}
             label = f"Indexed: <b>{n_docs}</b> files processed, <b>{n_chunks}</b> chunks"
         except Exception as e:
             label = f"Auto-index failed: <b>{e}</b>"
