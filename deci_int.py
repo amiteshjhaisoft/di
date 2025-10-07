@@ -20,17 +20,17 @@ os.environ.setdefault("CHROMA_TELEMETRY_IMPLEMENTATION", "none")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 logging.getLogger("chromadb").setLevel(logging.WARNING)
 
-# import re  # if not already imported
+import re  # if not already imported
 
-# GREETING_RE = re.compile(
-#     r"^\s*(hi|hello|hey|yo|hola|namaste|hiya|hi there|hello there|good\s+(morning|afternoon|evening))[\s!,.?]*$",
-#     re.IGNORECASE,
-# )
+GREETING_RE = re.compile(
+    r"^\s*(hi|hello|hey|yo|hola|namaste|hiya|hi there|hello there|good\s+(morning|afternoon|evening))[\s!,.?]*$",
+    re.IGNORECASE,
+)
 
-# def is_greeting(text: str) -> bool:
-#     t = (text or "").strip()
-#     # keep it strict so normal questions don't hit this path
-#     return len(t) <= 40 and bool(GREETING_RE.match(t))
+def is_greeting(text: str) -> bool:
+    t = (text or "").strip()
+    # keep it strict so normal questions don't hit this path
+    return len(t) <= 40 and bool(GREETING_RE.match(t))
 
 # LangChain bits
 from langchain_community.vectorstores import Chroma
@@ -473,112 +473,10 @@ def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optiona
         return None
 
 # --------------------- Main ---------------------
-def main():
-    for k, v in settings_defaults().items():
-        st.session_state.setdefault(k, v)
-
-    with st.sidebar:
-        lp = _resolve_logo_path()
-        if lp and Path(lp).exists():
-            try:
-                st.image(str(lp), caption="iSOFT ANZ Pvt Ltd", width=240)
-            except Exception:
-                pass
-        else:
-            st.info("Add assets/isoft_logo.png for branding.")
-
-        st.subheader("⚙️ Settings")
-        st.caption("Auto-index is enabled. Edit paths/models below if needed.")
-
-        st.session_state["base_folder"] = st.text_input("Knowledge Base", value=st.session_state["base_folder"])
-        st.session_state["persist_dir"] = st.text_input("Chroma persist", value=st.session_state["persist_dir"])
-        st.session_state["collection_name"] = st.text_input("Collection", value=st.session_state["collection_name"])
-
-        st.session_state["backend"] = st.radio("LLM", ["Claude (Anthropic)", "Ollama (local)"], index=0)
-        if st.session_state["backend"].startswith("Claude"):
-            st.session_state["claude_model"] = st.text_input("Claude model", value=st.session_state["claude_model"])
-        else:
-            st.session_state["ollama_model"] = st.text_input("Ollama model", value=st.session_state["ollama_model"])
-
-        st.session_state["temperature"] = st.slider("Temperature", 0.0, 1.0, 0.2, 0.05)
-        st.session_state["top_k"] = st.slider("Top-K", 1, 15, 5)
-        st.session_state["auto_index_min_interval_sec"] = st.number_input("Auto-index min interval (sec)", min_value=1, max_value=300, value=8, step=1)
-
-        try:
-            import anthropic as _anth
-            st.caption(f"anthropic=={getattr(_anth, '__version__', 'unknown')} • direct client mode")
-        except Exception:
-            st.caption("anthropic not importable")
-
-    st.markdown("### 💬 Chat with your Knowledge Base (LangChain RAG)")
-    hero_status = st.container()
-    vs = auto_index_if_needed(status_placeholder=hero_status)
-
-    st.session_state.setdefault("messages", [{"role": "assistant", "content": "Hi! Ask anything about your Knowledge Base."}])
-
-    st.markdown('<div class="chat-card">', unsafe_allow_html=True)
-    st.markdown('<div class="chat-scroll">', unsafe_allow_html=True)
-    for m in st.session_state["messages"]:
-        who = "user" if m["role"] == "user" else "assistant"
-        st.markdown(f'<div class="msg {who}"><div class="avatar {who}"></div><div class="bubble">{m["content"]}</div></div>', unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    st.session_state.setdefault("_compose_nonce", 0)
-    compose_key = f"compose_input_{st.session_state['_compose_nonce']}"
-
-    st.markdown('<div class="composer">', unsafe_allow_html=True)
-    c1, c2 = st.columns([1, 0.2])
-    with c1:
-        user_text = st.text_area("Message", key=compose_key, placeholder="Type your question…", label_visibility="collapsed")
-    with c2:
-        send = st.button("Send", use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    if send and user_text and user_text.strip():
-        query = user_text.strip()
-        st.session_state["messages"].append({"role": "user", "content": query})
-
-        if vs is None:
-            st.session_state["messages"].append({"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."})
-            st.session_state["_compose_nonce"] += 1
-            st.rerun()
-
-        backend = st.session_state["backend"]
-        model_name = st.session_state["claude_model"] if backend.startswith("Claude") else st.session_state["ollama_model"]
-        try:
-            llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
-        except Exception as e:
-            st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
-            st.session_state["_compose_nonce"] += 1
-            st.rerun()
-
-        chain = make_chain(vs, llm, int(st.session_state["top_k"]))
-
-        t0 = time.time()
-        try:
-            result = chain.invoke({"question": query})
-            answer = result.get("answer", "").strip() or "(no answer)"
-            sources = result.get("source_documents", []) or []
-            cited = []
-            for i, d in enumerate(sources, start=1):
-                src = (d.metadata or {}).get("source", "unknown")
-                cited.append(f"[{i}] {src}")
-            citation_block = ("\n\nSources:\n" + "\n".join(cited)) if cited else ""
-            msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
-        except Exception as e:
-            msg = f"RAG error: {e}"
-        st.session_state["messages"].append({"role": "assistant", "content": msg})
-        st.session_state["_compose_nonce"] += 1
-        st.rerun()
-
-# # --------------------- Main ---------------------
 # def main():
-#     # Defaults
 #     for k, v in settings_defaults().items():
 #         st.session_state.setdefault(k, v)
 
-#     # Sidebar
 #     with st.sidebar:
 #         lp = _resolve_logo_path()
 #         if lp and Path(lp).exists():
@@ -592,166 +490,268 @@ def main():
 #         st.subheader("⚙️ Settings")
 #         st.caption("Auto-index is enabled. Edit paths/models below if needed.")
 
-#         st.session_state["base_folder"] = st.text_input(
-#             "Knowledge Base", value=st.session_state["base_folder"]
-#         )
-#         st.session_state["persist_dir"] = st.text_input(
-#             "Chroma persist", value=st.session_state["persist_dir"]
-#         )
-#         st.session_state["collection_name"] = st.text_input(
-#             "Collection", value=st.session_state["collection_name"]
-#         )
+#         st.session_state["base_folder"] = st.text_input("Knowledge Base", value=st.session_state["base_folder"])
+#         st.session_state["persist_dir"] = st.text_input("Chroma persist", value=st.session_state["persist_dir"])
+#         st.session_state["collection_name"] = st.text_input("Collection", value=st.session_state["collection_name"])
 
-#         st.session_state["backend"] = st.radio(
-#             "LLM", ["Claude (Anthropic)", "Ollama (local)"], index=0
-#         )
+#         st.session_state["backend"] = st.radio("LLM", ["Claude (Anthropic)", "Ollama (local)"], index=0)
 #         if st.session_state["backend"].startswith("Claude"):
-#             st.session_state["claude_model"] = st.text_input(
-#                 "Claude model", value=st.session_state["claude_model"]
-#             )
+#             st.session_state["claude_model"] = st.text_input("Claude model", value=st.session_state["claude_model"])
 #         else:
-#             st.session_state["ollama_model"] = st.text_input(
-#                 "Ollama model", value=st.session_state["ollama_model"]
-#             )
+#             st.session_state["ollama_model"] = st.text_input("Ollama model", value=st.session_state["ollama_model"])
 
-#         st.session_state["temperature"] = st.slider(
-#             "Temperature", 0.0, 1.0, 0.2, 0.05
-#         )
+#         st.session_state["temperature"] = st.slider("Temperature", 0.0, 1.0, 0.2, 0.05)
 #         st.session_state["top_k"] = st.slider("Top-K", 1, 15, 5)
-#         st.session_state["auto_index_min_interval_sec"] = st.number_input(
-#             "Auto-index min interval (sec)", min_value=1, max_value=300, value=8, step=1
-#         )
+#         st.session_state["auto_index_min_interval_sec"] = st.number_input("Auto-index min interval (sec)", min_value=1, max_value=300, value=8, step=1)
 
 #         try:
 #             import anthropic as _anth
-#             st.caption(
-#                 f"anthropic=={getattr(_anth, '__version__', 'unknown')} • direct client mode"
-#             )
+#             st.caption(f"anthropic=={getattr(_anth, '__version__', 'unknown')} • direct client mode")
 #         except Exception:
 #             st.caption("anthropic not importable")
 
-#     # Title + status
 #     st.markdown("### 💬 Chat with your Knowledge Base (LangChain RAG)")
 #     hero_status = st.container()
 #     vs = auto_index_if_needed(status_placeholder=hero_status)
 
-#     # Chat history
-#     st.session_state.setdefault(
-#         "messages",
-#         [{"role": "assistant", "content": "Hi! Ask anything about your Knowledge Base."}],
-#     )
+#     st.session_state.setdefault("messages", [{"role": "assistant", "content": "Hi! Ask anything about your Knowledge Base."}])
 
-#     # Chat lane
 #     st.markdown('<div class="chat-card">', unsafe_allow_html=True)
 #     st.markdown('<div class="chat-scroll">', unsafe_allow_html=True)
 #     for m in st.session_state["messages"]:
 #         who = "user" if m["role"] == "user" else "assistant"
-#         st.markdown(
-#             f'<div class="msg {who}"><div class="avatar {who}"></div><div class="bubble">{m["content"]}</div></div>',
-#             unsafe_allow_html=True,
-#         )
+#         st.markdown(f'<div class="msg {who}"><div class="avatar {who}"></div><div class="bubble">{m["content"]}</div></div>', unsafe_allow_html=True)
 #     st.markdown("</div>", unsafe_allow_html=True)
 
-#     # Composer
 #     st.session_state.setdefault("_compose_nonce", 0)
 #     compose_key = f"compose_input_{st.session_state['_compose_nonce']}"
+
 #     st.markdown('<div class="composer">', unsafe_allow_html=True)
 #     c1, c2 = st.columns([1, 0.2])
 #     with c1:
-#         user_text = st.text_area(
-#             "Message", key=compose_key, placeholder="Type your question…", label_visibility="collapsed"
-#         )
+#         user_text = st.text_area("Message", key=compose_key, placeholder="Type your question…", label_visibility="collapsed")
 #     with c2:
 #         send = st.button("Send", use_container_width=True)
 #     st.markdown("</div>", unsafe_allow_html=True)
 #     st.markdown("</div>", unsafe_allow_html=True)
 
-#     # Send handler
-#     # Send handler
-# if send and user_text and user_text.strip():
-#     query = user_text.strip()
-#     st.session_state["messages"].append({"role": "user", "content": query})
+#     if send and user_text and user_text.strip():
+#         query = user_text.strip()
+#         st.session_state["messages"].append({"role": "user", "content": query})
 
-#     # --- Greeting short-circuit ----
-#     GREETING_RE = re.compile(
-#         r"^\s*(hi|hello|hey|yo|hola|namaste|hiya|hi there|hello there|"
-#         r"good\s+(morning|afternoon|evening))[\s!,.?]*$",
-#         re.IGNORECASE,
-#     )
-#     if len(query) <= 40 and GREETING_RE.match(query):
-#         st.session_state["messages"].append(
-#             {"role": "assistant", "content": "Hello! How can I help you today?"}
-#         )
-#         st.session_state["_compose_nonce"] += 1
-#         st.rerun()
-#     # --------------------------------
+#         if vs is None:
+#             st.session_state["messages"].append({"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."})
+#             st.session_state["_compose_nonce"] += 1
+#             st.rerun()
 
-#     if vs is None:
-#         st.session_state["messages"].append(
-#             {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
-#         )
-#         st.session_state["_compose_nonce"] += 1
-#         st.rerun()
+#         backend = st.session_state["backend"]
+#         model_name = st.session_state["claude_model"] if backend.startswith("Claude") else st.session_state["ollama_model"]
+#         try:
+#             llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
+#         except Exception as e:
+#             st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
+#             st.session_state["_compose_nonce"] += 1
+#             st.rerun()
 
-#     backend = st.session_state["backend"]
-#     model_name = (
-#         st.session_state["claude_model"]
-#         if backend.startswith("Claude")
-#         else st.session_state["ollama_model"]
-#     )
-#     try:
-#         llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
-#     except Exception as e:
-#         st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
+#         chain = make_chain(vs, llm, int(st.session_state["top_k"]))
+
+#         t0 = time.time()
+#         try:
+#             result = chain.invoke({"question": query})
+#             answer = result.get("answer", "").strip() or "(no answer)"
+#             sources = result.get("source_documents", []) or []
+#             cited = []
+#             for i, d in enumerate(sources, start=1):
+#                 src = (d.metadata or {}).get("source", "unknown")
+#                 cited.append(f"[{i}] {src}")
+#             citation_block = ("\n\nSources:\n" + "\n".join(cited)) if cited else ""
+#             msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
+#         except Exception as e:
+#             msg = f"RAG error: {e}"
+#         st.session_state["messages"].append({"role": "assistant", "content": msg})
 #         st.session_state["_compose_nonce"] += 1
 #         st.rerun()
 
-#     # if send and user_text and user_text.strip():
-#     #     query = user_text.strip()
-#     #     st.session_state["messages"].append({"role": "user", "content": query})
+# # --------------------- Main ---------------------
+def main():
+    # Defaults
+    for k, v in settings_defaults().items():
+        st.session_state.setdefault(k, v)
 
-#     #     if vs is None:
-#     #         st.session_state["messages"].append(
-#     #             {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
-#     #         )
-#     #         st.session_state["_compose_nonce"] += 1
-#     #         st.rerun()
+    # Sidebar
+    with st.sidebar:
+        lp = _resolve_logo_path()
+        if lp and Path(lp).exists():
+            try:
+                st.image(str(lp), caption="iSOFT ANZ Pvt Ltd", width=240)
+            except Exception:
+                pass
+        else:
+            st.info("Add assets/isoft_logo.png for branding.")
 
-#     #     backend = st.session_state["backend"]
-#     #     model_name = (
-#     #         st.session_state["claude_model"]
-#     #         if backend.startswith("Claude")
-#     #         else st.session_state["ollama_model"]
-#     #     )
-#     #     try:
-#     #         llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
-#     #     except Exception as e:
-#     #         st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
-#     #         st.session_state["_compose_nonce"] += 1
-#     #         st.rerun()
+        st.subheader("⚙️ Settings")
+        st.caption("Auto-index is enabled. Edit paths/models below if needed.")
 
-#     #     chain = make_chain(vs, llm, int(st.session_state["top_k"]))
+        st.session_state["base_folder"] = st.text_input(
+            "Knowledge Base", value=st.session_state["base_folder"]
+        )
+        st.session_state["persist_dir"] = st.text_input(
+            "Chroma persist", value=st.session_state["persist_dir"]
+        )
+        st.session_state["collection_name"] = st.text_input(
+            "Collection", value=st.session_state["collection_name"]
+        )
 
-#     #     t0 = time.time()
-#     #     try:
-#     #         result = chain.invoke({"question": query})
-#     #         answer = result.get("answer", "").strip() or "(no answer)"
-#     #         sources = result.get("source_documents", []) or []
+        st.session_state["backend"] = st.radio(
+            "LLM", ["Claude (Anthropic)", "Ollama (local)"], index=0
+        )
+        if st.session_state["backend"].startswith("Claude"):
+            st.session_state["claude_model"] = st.text_input(
+                "Claude model", value=st.session_state["claude_model"]
+            )
+        else:
+            st.session_state["ollama_model"] = st.text_input(
+                "Ollama model", value=st.session_state["ollama_model"]
+            )
 
-#     #         # Clean, de-duplicated, KB-relative source list
-#     #         citation_block = ""  # hide sources from chat
-#     #         # citation_block = build_citation_block(
-#     #         #     sources, kb_root=st.session_state.get("base_folder")
-#     #         # )
+        st.session_state["temperature"] = st.slider(
+            "Temperature", 0.0, 1.0, 0.2, 0.05
+        )
+        st.session_state["top_k"] = st.slider("Top-K", 1, 15, 5)
+        st.session_state["auto_index_min_interval_sec"] = st.number_input(
+            "Auto-index min interval (sec)", min_value=1, max_value=300, value=8, step=1
+        )
 
-#     #         msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
-#     #     except Exception as e:
-#     #         msg = f"RAG error: {e}"
+        try:
+            import anthropic as _anth
+            st.caption(
+                f"anthropic=={getattr(_anth, '__version__', 'unknown')} • direct client mode"
+            )
+        except Exception:
+            st.caption("anthropic not importable")
 
-#     #     st.session_state["messages"].append({"role": "assistant", "content": msg})
-#     #     # Clear text area by rotating the key
-#     #     st.session_state["_compose_nonce"] += 1
-#     #     st.rerun()
+    # Title + status
+    st.markdown("### 💬 Chat with your Knowledge Base (LangChain RAG)")
+    hero_status = st.container()
+    vs = auto_index_if_needed(status_placeholder=hero_status)
+
+    # Chat history
+    st.session_state.setdefault(
+        "messages",
+        [{"role": "assistant", "content": "Hi! Ask anything about your Knowledge Base."}],
+    )
+
+    # Chat lane
+    st.markdown('<div class="chat-card">', unsafe_allow_html=True)
+    st.markdown('<div class="chat-scroll">', unsafe_allow_html=True)
+    for m in st.session_state["messages"]:
+        who = "user" if m["role"] == "user" else "assistant"
+        st.markdown(
+            f'<div class="msg {who}"><div class="avatar {who}"></div><div class="bubble">{m["content"]}</div></div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Composer
+    st.session_state.setdefault("_compose_nonce", 0)
+    compose_key = f"compose_input_{st.session_state['_compose_nonce']}"
+    st.markdown('<div class="composer">', unsafe_allow_html=True)
+    c1, c2 = st.columns([1, 0.2])
+    with c1:
+        user_text = st.text_area(
+            "Message", key=compose_key, placeholder="Type your question…", label_visibility="collapsed"
+        )
+    with c2:
+        send = st.button("Send", use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+   
+    # Send handler
+    if send and user_text and user_text.strip():
+        query = user_text.strip()
+        st.session_state["messages"].append({"role": "user", "content": query})
+    
+        # --- Greeting short-circuit ----
+        GREETING_RE = re.compile(
+            r"^\s*(hi|hello|hey|yo|hola|namaste|hiya|hi there|hello there|"
+            r"good\s+(morning|afternoon|evening))[\s!,.?]*$",
+            re.IGNORECASE,
+        )
+        if len(query) <= 40 and GREETING_RE.match(query):
+            st.session_state["messages"].append(
+                {"role": "assistant", "content": "Hello! How can I help you today?"}
+            )
+            st.session_state["_compose_nonce"] += 1
+            st.rerun()
+        # --------------------------------
+    
+        if vs is None:
+            st.session_state["messages"].append(
+                {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
+            )
+            st.session_state["_compose_nonce"] += 1
+            st.rerun()
+    
+        backend = st.session_state["backend"]
+        model_name = (
+            st.session_state["claude_model"]
+            if backend.startswith("Claude")
+            else st.session_state["ollama_model"]
+        )
+        try:
+            llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
+        except Exception as e:
+            st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
+            st.session_state["_compose_nonce"] += 1
+            st.rerun()
+
+    # if send and user_text and user_text.strip():
+    #     query = user_text.strip()
+    #     st.session_state["messages"].append({"role": "user", "content": query})
+
+    #     if vs is None:
+    #         st.session_state["messages"].append(
+    #             {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
+    #         )
+    #         st.session_state["_compose_nonce"] += 1
+    #         st.rerun()
+
+    #     backend = st.session_state["backend"]
+    #     model_name = (
+    #         st.session_state["claude_model"]
+    #         if backend.startswith("Claude")
+    #         else st.session_state["ollama_model"]
+    #     )
+    #     try:
+    #         llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
+    #     except Exception as e:
+    #         st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
+    #         st.session_state["_compose_nonce"] += 1
+    #         st.rerun()
+
+    #     chain = make_chain(vs, llm, int(st.session_state["top_k"]))
+
+    #     t0 = time.time()
+    #     try:
+    #         result = chain.invoke({"question": query})
+    #         answer = result.get("answer", "").strip() or "(no answer)"
+    #         sources = result.get("source_documents", []) or []
+
+    #         # Clean, de-duplicated, KB-relative source list
+    #         citation_block = ""  # hide sources from chat
+    #         # citation_block = build_citation_block(
+    #         #     sources, kb_root=st.session_state.get("base_folder")
+    #         # )
+
+    #         msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
+    #     except Exception as e:
+    #         msg = f"RAG error: {e}"
+
+    #     st.session_state["messages"].append({"role": "assistant", "content": msg})
+    #     # Clear text area by rotating the key
+    #     st.session_state["_compose_nonce"] += 1
+    #     st.rerun()
 
 
 if __name__ == "__main__":
