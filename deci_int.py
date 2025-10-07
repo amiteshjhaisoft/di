@@ -1098,11 +1098,28 @@ def main():
     with st.sidebar:
         logo_path = _resolve_logo_path()
         if logo_path:
-            st_image_compat(str(logo_path)        # Chroma admin helper
-        show_chroma_admin_ui()
-, caption="iSOFT ANZ Pvt Ltd", use_column_width=True)
+            try:
+                st_image_compat(
+                    str(logo_path),
+                    caption="iSOFT ANZ Pvt Ltd",
+                    use_column_width=True,
+                )
+            except Exception:
+                # Fallback to plain st.image if compatibility wrapper fails
+                try:
+                    st.image(str(logo_path), caption="iSOFT ANZ Pvt Ltd")
+                except Exception:
+                    pass
+
+        # Chroma admin helper (best-effort, don't let it crash the sidebar)
+        try:
+            show_chroma_admin_ui()
+        except Exception:
+            pass
+
         st.subheader("⚙️ Settings")
         st.caption("Auto-index is enabled. Edit paths/models below if needed.")
+
 
         st.session_state["base_folder"] = st.text_input("Knowledge Base", value=st.session_state.get("base_folder", get_kb_dir()))
         st.session_state["persist_dir"] = st.text_input("Chroma persist", value=st.session_state["persist_dir"])
