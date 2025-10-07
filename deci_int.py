@@ -20,13 +20,6 @@ os.environ.setdefault("CHROMA_TELEMETRY_IMPLEMENTATION", "none")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 logging.getLogger("chromadb").setLevel(logging.WARNING)
 
-# LangChain bits
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferMemory
 import re  # if not already imported
 
 GREETING_RE = re.compile(
@@ -38,6 +31,15 @@ def is_greeting(text: str) -> bool:
     t = (text or "").strip()
     # keep it strict so normal questions don't hit this path
     return len(t) <= 40 and bool(GREETING_RE.match(t))
+
+# LangChain bits
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import Document
+from langchain.chains import ConversationalRetrievalChain
+from langchain.memory import ConversationBufferMemory
+
 
 
 # DO NOT import ChatAnthropic (prevents any path that might add proxies=...)
