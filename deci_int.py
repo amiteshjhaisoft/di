@@ -28,8 +28,8 @@ from langchain.schema import Document
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 
-# LLMs
-from langchain_anthropic import ChatAnthropic
+# DO NOT import ChatAnthropic (prevents any path that might add proxies=...)
+# from langchain_anthropic import ChatAnthropic
 
 # Anthropic SDK (new & old)
 try:
@@ -56,7 +56,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 class ClaudeDirect(BaseChatModel):
-    model: str = "claude-sonnet-4-5"
+    model: str = "claude-3-5-sonnet-20240620"   # valid model id
     temperature: float = 0.2
     max_tokens: int = 800
     _client: object = None  # Anthropic client set at init
@@ -90,7 +90,9 @@ class ClaudeDirect(BaseChatModel):
             max_tokens=self.max_tokens,
         )
         text = ""
-        for blk in getattr(resp, "content", []) or []:
+        content = getattr(resp, "content", []) or []
+        for blk in content:
+            # new SDK returns objects with .type/.text; some environments return dicts
             if getattr(blk, "type", None) == "text":
                 text += getattr(blk, "text", "") or ""
             elif isinstance(blk, dict) and blk.get("type") == "text":
@@ -299,7 +301,7 @@ def get_vectorstore(persist_dir: str, collection_name: str, emb_model: str) -> C
 
 # --------------------- Anthropic init helpers ---------------------
 def _strip_proxy_env() -> None:
-    for v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+    for v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "NO_PROXY", "no_proxy"):
         os.environ.pop(v, None)
 
 def _get_secret_api_key() -> Optional[str]:
@@ -342,16 +344,19 @@ def _anthropic_client_from_secrets():
 
 # --------------------- Chain builders ---------------------
 DEFAULT_OLLAMA = "llama3.2"
-DEFAULT_CLAUDE = "claude-sonnet-4-5"
+DEFAULT_CLAUDE = "claude-3-5-sonnet-20240620"
 
 def make_llm(backend: str, model_name: str, temperature: float):
     if backend.startswith("Claude"):
+        # Always bypass ChatAnthropic to avoid any proxies kw path
         client = _anthropic_client_from_secrets()
-        try:
-            return ChatAnthropic(client=client, model=model_name, temperature=temperature, max_tokens=800)
-        except TypeError as e:
-            return ClaudeDirect(client=client, model=model_name, temperature=temperature, max_tokens=800)
-    return ChatOllama(model=model_name, temperature=temperature)
+        return ClaudeDirect(
+            client=client,
+            model=model_name or DEFAULT_CLAUDE,
+            temperature=temperature,
+            max_tokens=800,
+        )
+    return ChatOllama(model=model_name or DEFAULT_OLLAMA, temperature=temperature)
 
 def make_chain(vs: Chroma, llm, k: int):
     retriever = vs.as_retriever(search_kwargs={"k": k})
@@ -446,7 +451,7 @@ def main():
 
         try:
             import anthropic as _anth
-            st.caption(f"anthropic=={getattr(_anth, '__version__', 'unknown')} • langchain-anthropic active")
+            st.caption(f"anthropic=={getattr(_anth, '__version__', 'unknown')} • direct client mode")
         except Exception:
             st.caption("anthropic not importable")
 
