@@ -13,3 +13,7 @@ rich==13.7.1   # streamlit<1.40 requires rich < 14
 # ---- LLM / tooling ----
 tiktoken==0.7.0
 langchain==0.2.17
+
+# ---- Vector store ----
+chromadb==0.5.3
+hnswlib==0.8.0
