@@ -5,19 +5,19 @@ streamlit==1.37.1
 langchain==0.2.15
 langchain-core==0.2.36
 langchain-community==0.2.15
-langchain-anthropic==0.1.23
 anthropic==0.39.0
-httpx==0.27.2  # used by anthropic
+httpx==0.27.2
 
 # --- Vector DB ---
 chromadb==0.5.5
 hnswlib==0.8.0
 
-# --- Embeddings ---
+# --- Embeddings / NLP ---
 sentence-transformers==2.7.0
 transformers==4.44.2
-# CPU build by default; swap to CUDA-specific wheel if you have a GPU
-torch>=2.1.0,<2.5
+
+# Torch CPU wheels are available on PyPI; pin to a known-good version for Cloud
+torch==2.3.1
 
 # --- Loaders / parsing ---
 pypdf==4.2.0
@@ -26,5 +26,8 @@ beautifulsoup4==4.12.3
 lxml==5.2.1
 pandas==2.2.2
 
-# --- Optional QoL ---
+# --- QoL ---
 python-dotenv==1.0.1
+
+# --- Compatibility guard (manylibs still expect NumPy<2 on Cloud images) ---
+numpy<2.0
