@@ -1,4 +1,21 @@
 # Author: Amitesh Jha | iSoft | 2025-10-07
+# LangChain refactor of your LLM chat + local RAG (Chroma) Streamlit app.
+# - Uses: Directory -> Loaders -> TextSplitter -> Embeddings -> Chroma -> ConversationalRetrievalChain
+# - LLMs: Claude (Anthropic) or local Ollama
+# - Robust to Chroma 0.5+ (persistent store, telemetry disabled, single instance)
+#
+# Install:
+#   pip install -r requirements.txt
+#
+# Run:
+#   streamlit run deci_int_langchain.py
+#
+# Env (optional):
+#   ANTHROPIC_API_KEY         -> for Claude
+#   ISOFT_LOGO_PATH           -> path to iSOFT logo
+#   USER_AVATAR_PATH          -> override user avatar path
+#   ASSISTANT_AVATAR_PATH     -> override assistant avatar path
+#   (Ollama runs at http://localhost:11434)
 
 from __future__ import annotations
 
@@ -27,7 +44,14 @@ from langchain.schema import Document
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 
-# LLMs\nfrom langchain_anthropic import ChatAnthropic\nfrom anthropic import Anthropic  # explicit client to avoid unsupported kwargs like 'proxies'\ntry:\n    from langchain_community.chat_models import ChatOllama  # preferred newer import\nexcept Exception:\n    from langchain_community.llms import Ollama as ChatOllama\n
+# LLMs
+from langchain_anthropic import ChatAnthropic
+from anthropic import Anthropic  # explicit client to avoid unsupported kwargs like 'proxies'
+try:
+    from langchain_community.chat_models import ChatOllama  # preferred newer import
+except Exception:
+    from langchain_community.llms import Ollama as ChatOllama
+
 # Loaders (lightweight set; fall back to manual readers where needed)
 from langchain_community.document_loaders import (
     TextLoader, PyPDFLoader, BSHTMLLoader, Docx2txtLoader, CSVLoader
@@ -533,7 +557,14 @@ _(Answered in {human_time((time.time()-t0)*1000)})_"
             for i, d in enumerate(sources, start=1):
                 src = (d.metadata or {}).get("source", "unknown")
                 cited.append(f"[{i}] {src}")
-            citation_block = ("\n\nSources:\n" + "\n".join(cited)) if cited else ""
+            if cited:
+                citation_block = "
+
+Sources:
+" + "
+".join(cited)
+            else:
+                citation_block = ""
             msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
         except Exception as e:
             msg = f"RAG error: {e}"
