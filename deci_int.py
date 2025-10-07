@@ -1,21 +1,4 @@
 # Author: Amitesh Jha | iSoft | 2025-10-07
-# LangChain refactor of your LLM chat + local RAG (Chroma) Streamlit app.
-# - Uses: Directory -> Loaders -> TextSplitter -> Embeddings -> Chroma -> ConversationalRetrievalChain
-# - LLMs: Claude (Anthropic) or local Ollama
-# - Robust to Chroma 0.5+ (persistent store, telemetry disabled, single instance)
-#
-# Install:
-#   pip install -r requirements.txt
-#
-# Run:
-#   streamlit run deci_int_langchain.py
-#
-# Env (optional):
-#   ANTHROPIC_API_KEY         -> for Claude
-#   ISOFT_LOGO_PATH           -> path to iSOFT logo
-#   USER_AVATAR_PATH          -> override user avatar path
-#   ASSISTANT_AVATAR_PATH     -> override assistant avatar path
-#   (Ollama runs at http://localhost:11434)
 
 from __future__ import annotations
 
@@ -44,13 +27,7 @@ from langchain.schema import Document
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 
-# LLMs
-from langchain_anthropic import ChatAnthropic
-try:
-    from langchain_community.chat_models import ChatOllama  # preferred newer import
-except Exception:
-    from langchain_community.llms import Ollama as ChatOllama
-
+# LLMs\nfrom langchain_anthropic import ChatAnthropic\nfrom anthropic import Anthropic  # explicit client to avoid unsupported kwargs like 'proxies'\ntry:\n    from langchain_community.chat_models import ChatOllama  # preferred newer import\nexcept Exception:\n    from langchain_community.llms import Ollama as ChatOllama\n
 # Loaders (lightweight set; fall back to manual readers where needed)
 from langchain_community.document_loaders import (
     TextLoader, PyPDFLoader, BSHTMLLoader, Docx2txtLoader, CSVLoader
@@ -304,7 +281,9 @@ DEFAULT_CLAUDE = "claude-3-5-sonnet-20240620"
 
 def make_llm(backend: str, model_name: str, temperature: float):
     if backend.startswith("Claude"):
-        return ChatAnthropic(model=model_name, temperature=temperature, max_tokens=800)
+        # Build Anthropic client explicitly to avoid env-injected unsupported kwargs (e.g. 'proxies')
+        client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        return ChatAnthropic(client=client, model=model_name, temperature=temperature, max_tokens=800)
     # Ollama (local)
     return ChatOllama(model=model_name, temperature=temperature)
 
@@ -516,8 +495,14 @@ def main():
             for i, d in enumerate(sources, start=1):
                 src = (d.metadata or {}).get("source", "unknown")
                 cited.append(f"[{i}] {src}")
-            citation_block = ("\n\nSources:\n" + "\n".join(cited)) if cited else ""
-            msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
+            citation_block = ("
+
+Sources:
+" + "
+".join(cited)) if cited else ""
+            msg = f"{answer}{citation_block}
+
+_(Answered in {human_time((time.time()-t0)*1000)})_"
         except Exception as e:
             msg = f"RAG error: {e}"
         st.session_state["messages"].append({"role": "assistant", "content": msg})
