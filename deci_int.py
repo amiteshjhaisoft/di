@@ -31,7 +31,9 @@ from langchain.memory import ConversationBufferMemory
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
-from langchain_community.document_loaders import PyPDFLoader, BSHTMLLoader, Docx2txtLoader, CSVLoader, UnstructuredPowerPointLoader
+from langchain_community.document_loaders import (
+    PyPDFLoader, BSHTMLLoader, Docx2txtLoader, CSVLoader, UnstructuredPowerPointLoader
+)
 try:
     from langchain_community.chat_models import ChatOllama
 except Exception:
@@ -61,7 +63,7 @@ _ENCODE_KW = {
 
 # --- Supported Extensions for Text/Documents ---
 TEXT_EXTS = {".txt", ".md", ".rtf", ".html", ".htm", ".json", ".xml"}
-DOC_EXTS  = {".pdf", ".docx", ".csv", ".tsv", ".pptx", ".pptm", ".doc", ".odt"} # Added .doc, .odt
+DOC_EXTS  = {".pdf", ".docx", ".csv", ".tsv", ".pptx", ".pptm", ".doc", ".odt"}  # Added .doc, .odt
 SPREADSHEET_EXTS = {".xlsx", ".xlsm", ".xltx"}
 SUPPORTED_TEXT_DOCS = TEXT_EXTS | DOC_EXTS | SPREADSHEET_EXTS
 
@@ -72,11 +74,12 @@ VIDEO_EXTS = {".mp4", ".mov", ".avi"}
 
 SUPPORTED_EXTS = SUPPORTED_TEXT_DOCS | IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
 
-
 GREETING_RE = re.compile(
-    r"^\s*(hi|hello|hey|yo|hola|namaste|hiya|hi there|hello there|"
-    r"good\s+(morning|afternoon|evening))[\s!,.?]*$",
-    re.IGNORECASE,
+    r"""^\s*(
+        hi|hello|hey|hiya|yo|hola|namaste|namaskar|g'day|
+        good\s+(morning|afternoon|evening)
+    )[\s!,.?]*$""",
+    re.IGNORECASE | re.VERBOSE,
 )
 
 # --------------------- Minimal direct Claude model (bypass proxies kw path) ---------------------
@@ -167,13 +170,10 @@ def _resolve_logo_path() -> Optional[Path]:
 def _resolve_avatar_paths() -> Tuple[Optional[Path], Optional[Path]]:
     env_user = os.getenv("USER_AVATAR_PATH")
     env_asst = os.getenv("ASSISTANT_AVATAR_PATH")
-    
-    # Defaults to assets/avatar.png for user and assets/llm.png for assistant
-    user_candidates = [Path.cwd() / "assets" / "avatar.png", 
+    user_candidates = [Path.cwd() / "assets" / "avatar.png",
                        Path(env_user).expanduser().resolve() if env_user else None]
-    asst_candidates = [Path.cwd() / "assets" / "llm.png", 
+    asst_candidates = [Path.cwd() / "assets" / "llm.png",
                        Path(env_asst).expanduser().resolve() if env_asst else None]
-                       
     user = next((p for p in user_candidates if p and p.exists()), None)
     asst = next((p for p in asst_candidates if p and p.exists()), None)
     return user, asst
@@ -195,33 +195,32 @@ asst_bg  = f"background-image:url('{ASSIST_AVATAR_URI}');" if ASSIST_AVATAR_URI 
 
 css = """
 <style>
-:root{{ 
+:root{ 
   --bg:#f7f8fb; --sidebar-bg:#f5f7fb; --panel:#fff; --text:#0b1220;
   --muted:#5d6b82; --accent:#2563eb; --border:#e7eaf2;
   --bubble-user:#eef4ff; --bubble-assist:#f6f7fb;
-}}
-html, body, [data-testid="stAppViewContainer"]{{ background:var(--bg); color:var(--text); }}
-section[data-testid="stSidebar"]{{ background:var(--sidebar-bg); border-right:1px solid var(--border); }}
-main .block-container{{ padding-top:.6rem; }}
-.container-narrow{{ max-width:1080px; margin:0 auto; }}
-.chat-card{{ background:var(--panel); border:1px solid var(--border); border-radius:14px; box-shadow:0 6px 16px rgba(16,24,40,.05); overflow:hidden; }}
-.chat-scroll{{ max-height: 75vh; overflow:auto; padding:.65rem .9rem; }}
-.msg{{ display:flex; align-items:flex-start; gap:.65rem; margin:.45rem 0; }}
-.avatar{{ width:32px; height:32px; border-radius:50%; border:1px solid var(--border); background-size:cover; background-position:center; background-repeat:no-repeat; flex:0 0 32px; }}
-.avatar.user {{
-  {user_bg}
-}}
-.avatar.assistant {{
-  {asst_bg}
-}}
-.bubble{{ border:1px solid var(--border); background:var(--bubble-assist); padding:.8rem .95rem; border-radius:12px; max-width:860px; white-space:pre-wrap; line-height:1.45; }}
-.msg.user .bubble{{ background:var(--bubble-user); }}
-.composer{{ padding:.6rem .75rem; border-top:1px solid var(--border); background:#fff; position:sticky; bottom:0; z-index:2; }}
-.status-inline{{ width:100%; border:1px solid var(--border); background:#fafcff; border-radius:10px; padding:.5rem .7rem; font-size:.9rem; color:#111827; margin:.5rem 0 .8rem; }}
-.smallcaps{{ font-variant: all-small-caps; color:#475569; }}
+}
+html, body, [data-testid="stAppViewContainer"]{ background:var(--bg); color:var(--text); }
+section[data-testid="stSidebar"]{ background:var(--sidebar-bg); border-right:1px solid var(--border); }
+main .block-container{ padding-top:.6rem; }
+.container-narrow{ max-width:1080px; margin:0 auto; }
+.chat-card{ background:var(--panel); border:1px solid var(--border); border-radius:14px; box-shadow:0 6px 16px rgba(16,24,40,.05); overflow:hidden; }
+.chat-scroll{ max-height: 75vh; overflow:auto; padding:.65rem .9rem; }
+.msg{ display:flex; align-items:flex-start; gap:.65rem; margin:.45rem 0; }
+.avatar{ width:32px; height:32px; border-radius:50%; border:1px solid var(--border); background-size:cover; background-position:center; background-repeat:no-repeat; flex:0 0 32px; }
+.avatar.user {
+  """ + user_bg + """
+}
+.avatar.assistant {
+  """ + asst_bg + """
+}
+.bubble{ border:1px solid var(--border); background:var(--bubble-assist); padding:.8rem .95rem; border-radius:12px; max-width:860px; white-space:pre-wrap; line-height:1.45; }
+.msg.user .bubble{ background:var(--bubble-user); }
+.composer{ padding:.6rem .75rem; border-top:1px solid var(--border); background:#fff; position:sticky; bottom:0; z-index:2; }
+.status-inline{ width:100%; border:1px solid var(--border); background:#fafcff; border-radius:10px; padding:.5rem .7rem; font-size:.9rem; color:#111827; margin:.5rem 0 .8rem; }
+.smallcaps{ font-variant: all-small-caps; color:#475569; }
 </style>
-""".format(user_bg=user_bg, asst_bg=asst_bg)
-
+"""
 st.markdown(css, unsafe_allow_html=True)
 
 # --------------------- Helpers (minimal changes) ---------------------
@@ -257,10 +256,8 @@ def compute_kb_signature(folder: str) -> Tuple[str, int]:
             continue
     lines.sort()
     raw = "\n".join(lines)
-    
-    # Also include the list of text/doc extensions used in indexing, as they might change
+    # Include the list of text/doc extensions used in indexing (signature changes when policy changes)
     raw += str(SUPPORTED_TEXT_DOCS)
-    
     return stable_hash(raw if raw else f"EMPTY-{time.time()}"), len(files)
 
 # --------------------- Loading ---------------------
@@ -280,7 +277,6 @@ def _fallback_read(path: str) -> str:
             header = " | ".join(df.columns.tolist())
             body = "\n".join(" | ".join(row) for row in df.values.tolist())
             return f"CSV/TSV content from {Path(path).name}:\nColumns: {header}\nData:\n{body}"
-        
         # Fallback for generic text files
         return Path(path).read_text(encoding="utf-8", errors="ignore")
     except Exception as e:
@@ -289,58 +285,106 @@ def _fallback_read(path: str) -> str:
 
 def load_one(path: str) -> List[Document]:
     p = path.lower()
-    
+
     # 1. Media Files (Only logs and returns a placeholder document)
     if p.endswith(tuple(IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS)):
         doc_type = "Image" if p.endswith(tuple(IMAGE_EXTS)) else ("Audio" if p.endswith(tuple(AUDIO_EXTS)) else "Video")
-        
-        # NOTE: For RAG to work, the placeholder text needs to be replaced 
-        # with actual content, e.g., OCR text for images, transcription for audio/video.
         placeholder_content = (
             f"This document is a {doc_type} file. "
             f"Full text content is unavailable as the system lacks the necessary {doc_type} processing (e.g., OCR, Transcription) capabilities. "
             f"Metadata: Filename is {Path(path).name}."
         )
         return [Document(page_content=placeholder_content, metadata={"source": path, "type": doc_type, "status": "placeholder"})]
-        
+
     # 2. Document/Text Files
     try:
         if p.endswith(".pdf"):
-            # Using PyPDFLoader for PDFs
             return PyPDFLoader(path).load()
         if p.endswith((".html", ".htm")):
             return BSHTMLLoader(path).load()
         if p.endswith(".docx"):
             return Docx2txtLoader(path).load()
         if p.endswith((".pptx", ".pptm")):
-            # Using Unstructured for more robust PPTX handling
             return UnstructuredPowerPointLoader(path).load()
         if p.endswith(".csv"):
             return CSVLoader(path).load()
         if p.endswith(".tsv"):
             return CSVLoader(path, csv_args={"delimiter": "\t"}).load()
         if p.endswith(tuple(TEXT_EXTS | SPREADSHEET_EXTS | {".doc", ".odt"})):
-            # Use fallback for generic text, spreadsheets, and other doc formats
             txt = _fallback_read(path)
             return [Document(page_content=txt, metadata={"source": path})] if txt.strip() else []
-            
-        # Fallback for any unknown document type not handled above
+        # Fallback
         txt = _fallback_read(path)
         return [Document(page_content=txt, metadata={"source": path})] if txt.strip() else []
-        
     except Exception as e:
-        # Generic error handling for document loading issues
         st.warning(f"Failed to load/process {Path(path).name} (Type: {p.split('.')[-1]}). Error: {e}")
         return []
 
 def load_documents(folder: str) -> List[Document]:
     docs: List[Document] = []
-    # Only iterate through files that are in the knowledge base
     files_to_load = [p for p in iter_files(folder) if Path(p).suffix.lower() in SUPPORTED_EXTS]
-    
     for path in files_to_load:
         docs.extend(load_one(path))
     return docs
+
+# --------------------- Full-document helpers (NEW) -----------------------------
+def _concat_docs(docs: List[Document]) -> str:
+    parts = []
+    for i, d in enumerate(docs, 1):
+        meta = d.metadata or {}
+        src = meta.get("source", "")
+        page = meta.get("page")
+        hdr = (
+            f"\n\n--- [chunk {i} | page {page}] {Path(src).name} ---\n"
+            if page is not None else
+            f"\n\n--- [chunk {i}] {Path(src).name} ---\n"
+        )
+        parts.append(hdr + (d.page_content or ""))
+    return "".join(parts).strip()
+
+def read_whole_file_from_disk(path: str) -> str:
+    """Load a single file with the same loaders you use for indexing and return all text."""
+    docs = load_one(path)
+    return _concat_docs(docs)
+
+def read_whole_doc_by_name(name_or_stem: str, base_folder: str) -> Tuple[str, List[str]]:
+    """
+    Find file(s) in KB whose filename contains `name_or_stem` (case-insensitive),
+    load them fully, and return concatenated text + list of matched paths.
+    """
+    name_or_stem = name_or_stem.lower().strip()
+    candidates = [p for p in iter_files(base_folder) if name_or_stem in os.path.basename(p).lower()]
+    texts = []
+    for p in candidates:
+        try:
+            texts.append(read_whole_file_from_disk(p))
+        except Exception as e:
+            texts.append(f"[Error reading {os.path.basename(p)}: {e}]")
+    return ("\n\n".join(t for t in texts if t.strip()) or ""), candidates
+
+def get_all_chunks_from_vectorstore(vs: Chroma, source_basename: str) -> str:
+    """
+    Retrieve *all* chunks whose metadata.source contains the basename.
+    Uses Chroma collection directly.
+    """
+    try:
+        coll = vs._collection  # type: ignore
+    except Exception:
+        return ""
+    res = coll.get(where={"source": {"$contains": source_basename}})
+    docs = res.get("documents") or []
+    mets = res.get("metadatas") or []
+    out = []
+    for i, (txt, md) in enumerate(zip(docs, mets), 1):
+        page = md.get("page")
+        src = md.get("source", source_basename)
+        hdr = (
+            f"\n\n--- [chunk {i} | page {page}] {Path(src).name} ---\n"
+            if page is not None else
+            f"\n\n--- [chunk {i}] {Path(src).name} ---\n"
+        )
+        out.append(hdr + (txt or ""))
+    return "".join(out).strip()
 
 # --------------------- Indexing ---------------------
 @dataclass
@@ -359,10 +403,19 @@ def index_folder_langchain(folder: str, persist_dir: str, collection_name: str, 
     raw_docs = load_documents(folder)
     if not raw_docs:
         return (0, 0)
-    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_cfg.chunk_size, chunk_overlap=chunk_cfg.chunk_overlap, separators=["\n\n", "\n", ". ", " "])
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_cfg.chunk_size,
+        chunk_overlap=chunk_cfg.chunk_overlap,
+        separators=["\n\n", "\n", ". ", " "]
+    )
     splat = splitter.split_documents(raw_docs)
     embeddings = _make_embeddings()
-    _ = Chroma.from_documents(documents=splat, embedding=embeddings, collection_name=collection_name, persist_directory=persist_dir).persist()
+    _ = Chroma.from_documents(
+        documents=splat,
+        embedding=embeddings,
+        collection_name=collection_name,
+        persist_directory=persist_dir
+    ).persist()
     return (len(raw_docs), len(splat))
 
 def get_vectorstore(persist_dir: str, collection_name: str, emb_model: str) -> Chroma:
@@ -444,7 +497,6 @@ def make_chain(vs: Chroma, llm: BaseChatModel, k: int):
         verbose=False,
     )
 
-
 # --------------------- Defaults + auto-index ---------------------
 def settings_defaults() -> Dict[str, Any]:
     kb_dir = get_kb_dir()
@@ -481,7 +533,10 @@ def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optiona
     if need_index and not throttled:
         try:
             target.markdown('<div class="status-inline">Indexing…</div>', unsafe_allow_html=True)
-            n_docs, n_chunks = index_folder_langchain(folder, persist, colname, emb_model, st.session_state.get("chunk_cfg", ChunkingConfig()))
+            n_docs, n_chunks = index_folder_langchain(
+                folder, persist, colname, emb_model,
+                st.session_state.get("chunk_cfg", ChunkingConfig())
+            )
             st.session_state["_kb_last_sig"] = sig_now
             st.session_state["_kb_last_index_ts"] = now
             st.session_state["_kb_last_counts"] = {"files": file_count, "docs": n_docs, "chunks": n_chunks}
@@ -492,7 +547,10 @@ def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optiona
     else:
         ts = st.session_state.get("_kb_last_index_ts")
         when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else "—"
-        target.markdown(f'<div class="status-inline">Auto-index is <b>ON</b> · Files: <b>{file_count}</b> · Last indexed: <b>{when}</b> · Collection: <code>{colname}</code></div>', unsafe_allow_html=True)
+        target.markdown(
+            f'<div class="status-inline">Auto-index is <b>ON</b> · Files: <b>{file_count}</b> · Last indexed: <b>{when}</b> · Collection: <code>{colname}</code></div>',
+            unsafe_allow_html=True
+        )
 
     try:
         return get_vectorstore(persist, colname, emb_model)
@@ -535,16 +593,14 @@ def render_sidebar():
         st.session_state["auto_index_min_interval_sec"] = st.number_input(
             "Auto-index min interval (sec)", min_value=1, max_value=300, value=8, step=1
         )
-        
+
         st.markdown(f"**Supported Document Types:** `{', '.join(sorted(SUPPORTED_TEXT_DOCS))}`")
         st.markdown(f"**Media Files (Placeholder Only):** `{', '.join(sorted(IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS))}`")
 
         # Anthropic status
         try:
             import anthropic as _anth
-            st.caption(
-                f"anthropic=={getattr(_anth, '__version__', 'unknown')} • direct client mode"
-            )
+            st.caption(f"anthropic=={getattr(_anth, '__version__', 'unknown')} • direct client mode")
         except Exception:
             st.caption("anthropic not importable")
 
@@ -559,18 +615,45 @@ def render_chat_history():
 def handle_user_input(query: str, vs: Optional[Chroma]):
     """Processes the user query, updates history, and runs the RAG chain."""
 
-    # 1. Append user message
+    # 1) Append user message
     st.session_state["messages"].append({"role": "user", "content": query})
 
-    # 2. Short-circuit for simple greetings (improves latency)
-    if len(query) <= 40 and GREETING_RE.match(query):
-        st.session_state["messages"].append(
-            {"role": "assistant", "content": "Hello! How can I help you today with your Knowledge Base?"}
-        )
+    # 2) Full-document commands (bypass retriever) — NEW
+    m = re.match(r"^\s*(read|open|show)\s+(.+)$", query, flags=re.IGNORECASE)
+    if m:
+        target = m.group(2).strip().strip('"').strip("'")
+        full_text, files = read_whole_doc_by_name(target, st.session_state["base_folder"])
+        if not files:
+            st.session_state["messages"].append(
+                {"role": "assistant", "content": f"Couldn't find a file containing “{target}” in the Knowledge Base folder."}
+            )
+            st.rerun()
+            return
+
+        # Summarize if very large, else show content
+        if len(full_text) > 8000:
+            try:
+                backend = st.session_state["backend"]
+                model_name = st.session_state["claude_model"] if backend.startswith("Claude") else st.session_state["ollama_model"]
+                llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
+                summary = llm.predict(f"Summarize the following document comprehensively:\n\n{full_text[:180000]}")
+                reply = f"**Full-document summary for:** {', '.join(Path(p).name for p in files)}\n\n{summary}"
+            except Exception as e:
+                reply = f"Loaded the full document but failed to summarize: {e}\n\n--- RAW BEGIN ---\n{full_text[:20000]}\n--- RAW TRUNCATED ---"
+        else:
+            reply = f"**Full document content:**\n\n{full_text}"
+
+        st.session_state["messages"].append({"role": "assistant", "content": reply})
         st.rerun()
         return
 
-    # 3. Check Vector Store
+    # 3) Short-circuit for simple greetings (reply exactly "Hello")
+    if GREETING_RE.match(query):
+        st.session_state["messages"].append({"role": "assistant", "content": "Hello"})
+        st.rerun()
+        return
+
+    # 4) Check Vector Store
     if vs is None:
         st.session_state["messages"].append(
             {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
@@ -578,13 +661,9 @@ def handle_user_input(query: str, vs: Optional[Chroma]):
         st.rerun()
         return
 
-    # 4. Initialize LLM
+    # 5) Initialize LLM
     backend = st.session_state["backend"]
-    model_name = (
-        st.session_state["claude_model"]
-        if backend.startswith("Claude")
-        else st.session_state["ollama_model"]
-    )
+    model_name = st.session_state["claude_model"] if backend.startswith("Claude") else st.session_state["ollama_model"]
     try:
         llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
     except Exception as e:
@@ -592,37 +671,29 @@ def handle_user_input(query: str, vs: Optional[Chroma]):
         st.rerun()
         return
 
-    # 5. Run RAG Chain
+    # 6) Run RAG Chain
     chain = make_chain(vs, llm, int(st.session_state["top_k"]))
-
     t0 = time.time()
     try:
         with st.spinner(f"Querying {backend} with RAG..."):
             result = chain.invoke({"question": query})
             answer = result.get("answer", "").strip() or "I could not find an answer in the Knowledge Base."
             sources = result.get("source_documents", []) or []
-
-        # Build citation block if sources exist
-        citation_block = build_citation_block(
-            sources, kb_root=st.session_state.get("base_folder")
-        )
-
+        citation_block = build_citation_block(sources, kb_root=st.session_state.get("base_folder"))
         msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
-
     except Exception as e:
         msg = f"RAG error: {e}"
 
-    # 6. Append assistant message
+    # 7) Append assistant message
     st.session_state["messages"].append({"role": "assistant", "content": msg})
     st.rerun()
 
-
 def main():
-    # 1. Initialize session state defaults
+    # 1) Initialize session state defaults
     for k, v in settings_defaults().items():
         st.session_state.setdefault(k, v)
 
-    # 2. Render UI
+    # 2) Render UI
     render_sidebar()
 
     # Title & Index Status
@@ -640,21 +711,15 @@ def main():
     st.markdown('<div class="chat-card">', unsafe_allow_html=True)
     st.markdown('<div class="chat-scroll">', unsafe_allow_html=True)
     render_chat_history()
-    st.markdown("</div>", unsafe_allow_html=True) # End chat-scroll
+    st.markdown("</div>", unsafe_allow_html=True)  # End chat-scroll
 
-    # Composer (now just the text input)
+    # Composer (native chat input)
     st.markdown('<div class="composer">', unsafe_allow_html=True)
+    user_text = st.chat_input("Type your question...", key="user_prompt_input")
+    st.markdown("</div>", unsafe_allow_html=True)  # End composer
+    st.markdown("</div>", unsafe_allow_html=True)  # End chat-card
 
-    # Use the native st.chat_input for the user prompt
-    user_text = st.chat_input(
-        "Type your question...",
-        key="user_prompt_input"
-    )
-
-    st.markdown("</div>", unsafe_allow_html=True) # End composer
-    st.markdown("</div>", unsafe_allow_html=True) # End chat-card
-
-    # 3. Handle User Input
+    # 3) Handle User Input
     if user_text and user_text.strip():
         handle_user_input(user_text.strip(), vs)
 
