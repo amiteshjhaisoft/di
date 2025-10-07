@@ -360,8 +360,20 @@ def make_llm(backend: str, model_name: str, temperature: float):
 
 def make_chain(vs: Chroma, llm, k: int):
     retriever = vs.as_retriever(search_kwargs={"k": k})
-    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-    return ConversationalRetrievalChain.from_llm(llm=llm, retriever=retriever, memory=memory, return_source_documents=True, verbose=False)
+    # Tell memory which output field to capture
+    memory = ConversationBufferMemory(
+        memory_key="chat_history",
+        output_key="answer",        # <-- key fix
+        return_messages=True
+    )
+    return ConversationalRetrievalChain.from_llm(
+        llm=llm,
+        retriever=retriever,
+        memory=memory,
+        return_source_documents=True,
+        verbose=False,
+    )
+
 
 # --------------------- Defaults + auto-index ---------------------
 def settings_defaults():
