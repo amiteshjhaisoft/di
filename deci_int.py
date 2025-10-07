@@ -1,12 +1,12 @@
 # Author: Amitesh Jha | iSoft | 2025-10-07 (Refactored: Gemini)
 # Streamlit + LangChain RAG app — CPU-safe embeddings + Anthropic proxies-proof init.
-
 from __future__ import annotations
-import os, glob, time, base64, hashlib, logging
+
+import os, glob, time, base64, hashlib, logging, shutil
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple, Optional, Dict, Any, Type, Union
+from typing import List, Tuple, Optional, Dict, Any
 
 import streamlit as st
 import pandas as pd
@@ -16,13 +16,8 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")            # force no CUDA
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
-# Quiet Chroma / disable OTel (Removed Chroma-specific settings)
-# os.environ.setdefault("CHROMA_TELEMETRY_IMPLEMENTATION", "none")
-# os.environ.setdefault("OTEL_SDK_DISABLED", "true")
-# logging.getLogger("chromadb").setLevel(logging.WARNING)
-
-# LangChain bits (FAISS & Imports updated)
-from langchain_community.vectorstores import FAISS # <--- CHANGED FROM CHROMA
+# LangChain bits (FAISS build)
+from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
@@ -53,13 +48,8 @@ except Exception:
 DEFAULT_OLLAMA = "llama3.2"
 DEFAULT_CLAUDE = "claude-sonnet-4-5"
 _EMB_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-_EMB_MODEL_KW = {
-    "device": "cpu",
-    "trust_remote_code": False,
-}
-_ENCODE_KW = {
-    "normalize_embeddings": True,
-}
+_EMB_MODEL_KW = {"device": "cpu", "trust_remote_code": False}
+_ENCODE_KW = {"normalize_embeddings": True}
 
 # --- Supported Extensions for Text/Documents ---
 TEXT_EXTS = {".txt", ".md", ".rtf", ".html", ".htm", ".json", ".xml"}
@@ -67,32 +57,26 @@ DOC_EXTS  = {".pdf", ".docx", ".csv", ".tsv", ".pptx", ".pptm", ".doc", ".odt"}
 SPREADSHEET_EXTS = {".xlsx", ".xlsm", ".xltx"}
 SUPPORTED_TEXT_DOCS = TEXT_EXTS | DOC_EXTS | SPREADSHEET_EXTS
 
-# --- Extensions for Media (Requires external libraries/APIs for RAG) ---
+# --- Extensions for Media (placeholder only) ---
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tiff"}
 AUDIO_EXTS = {".mp3", ".wav", ".m4a"}
 VIDEO_EXTS = {".mp4", ".mov", ".avi"}
-
 SUPPORTED_EXTS = SUPPORTED_TEXT_DOCS | IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
 
-
 GREETING_RE = re.compile(
-    r"""^\s*(
-        hi|hello|hey|hiya|yo|hola|namaste|namaskar|g'day|
-        good\s+(morning|afternoon|evening)
-    )[\s!,.?]*$""",
-    re.IGNORECASE | re.VERBOSE,
+    r"""^\s*(hi|hello|hey|hiya|yo|hola|namaste|namaskar|g'day|good\s+(morning|afternoon|evening))[\s!,.?]*$""",
+    re.IGNORECASE,
 )
 
-# Define the VectorStore type for type hinting (either FAISS or the old Chroma)
-VectorStoreType = FAISS # <--- CHANGED TYPE HINT
+# VectorStore type
+VectorStoreType = FAISS
 
-# --------------------- Minimal direct Claude model (bypass proxies kw path) ---------------------
-
+# --------------------- Minimal direct Claude model ---------------------
 class ClaudeDirect(BaseChatModel):
-    model: str = DEFAULT_CLAUDE     # valid model id
+    model: str = DEFAULT_CLAUDE
     temperature: float = 0.2
     max_tokens: int = 800
-    _client: object = None  # Anthropic client set at init
+    _client: object = None
 
     def __init__(self, client, **kwargs):
         super().__init__(**kwargs)
@@ -110,17 +94,14 @@ class ClaudeDirect(BaseChatModel):
                 text = m.content
             else:
                 parts = m.content or []
-                text = "".join(p.get("text","") if isinstance(p, dict) else str(p) for p in parts)
+                text = "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in parts)
             out.append({"role": role, "content": [{"type": "text", "text": text}]})
         return out
 
     def _generate(self, messages: list[BaseMessage], stop=None, run_manager=None, **kwargs) -> ChatResult:
         amsgs = self._convert_msgs(messages)
         resp = self._client.messages.create(
-            model=self.model,
-            messages=amsgs,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
+            model=self.model, messages=amsgs, temperature=self.temperature, max_tokens=self.max_tokens
         )
         text = ""
         content = getattr(resp, "content", []) or []
@@ -132,37 +113,23 @@ class ClaudeDirect(BaseChatModel):
         ai = AIMessage(content=text)
         return ChatResult(generations=[ChatGeneration(message=ai)])
 
-
 def build_citation_block(source_docs: List[Document], kb_root: str | None = None) -> str:
-    names = []
+    if not source_docs:
+        return ""
     from collections import Counter
-
-    for d in source_docs or []:
+    names = []
+    for d in source_docs:
         meta = getattr(d, "metadata", {}) or {}
         src = meta.get("source", "unknown")
-
         try:
-            if kb_root:
-                # Use a stable relative path for display
-                rel = Path(src).resolve().relative_to(Path(kb_root).resolve())
-                display = str(rel)
-            else:
-                display = Path(src).name
+            display = str(Path(src).resolve().relative_to(Path(kb_root).resolve())) if kb_root else Path(src).name
         except Exception:
             display = Path(src).name
-
         names.append(display)
-
-    if not names:
-        return ""
-
     counts = Counter(names)
     lines = [f"- {name}" + (f" ×{n}" if n > 1 else "") for name, n in counts.items()]
-    # return "\n\n**Sources**\n" + "\n".join(lines)
-    return ""
+    return "\n\n**Sources**\n" + "\n".join(lines)
 
-# --------------------- UI / THEME (No changes needed) ---------------------
-# ... (css and sidebar functions are omitted for brevity, as they are unchanged)
 # --------------------- UI / THEME ---------------------
 st.set_page_config(page_title="LLM Chat • LangChain RAG", page_icon="💬", layout="wide")
 
@@ -175,15 +142,23 @@ def _resolve_logo_path() -> Optional[Path]:
             return p
     return None
 
+def _first_existing(paths: list[Optional[Path]]) -> Optional[Path]:
+    for p in paths:
+        if p and p.exists():
+            return p
+    return None
+
 def _resolve_avatar_paths() -> Tuple[Optional[Path], Optional[Path]]:
-    env_user = os.getenv("USER_AVATAR_PATH")
-    env_asst = os.getenv("ASSISTANT_AVATAR_PATH")
-    user_candidates = [Path.cwd() / "assets" / "avatar.png",
-                       Path(env_user).expanduser().resolve() if env_user else None]
-    asst_candidates = [Path.cwd() / "assets" / "llm.png",
-                       Path(env_asst).expanduser().resolve() if env_asst else None]
-    user = next((p for p in user_candidates if p and p.exists()), None)
-    asst = next((p for p in asst_candidates if p and p.exists()), None)
+    user_env = os.getenv("USER_AVATAR_PATH")
+    asst_env = os.getenv("ASSISTANT_AVATAR_PATH")
+    user = _first_existing([
+        Path(user_env).expanduser().resolve() if user_env else None,
+        Path.cwd() / "assets" / "avatar.png",
+    ])
+    asst = _first_existing([
+        Path(asst_env).expanduser().resolve() if asst_env else None,
+        Path.cwd() / "assets" / "llm.png",
+    ])
     return user, asst
 
 def _img_to_data_uri(path: Optional[Path]) -> Optional[str]:
@@ -197,42 +172,32 @@ def _img_to_data_uri(path: Optional[Path]) -> Optional[str]:
 USER_AVATAR_PATH, ASSIST_AVATAR_PATH = _resolve_avatar_paths()
 USER_AVATAR_URI = _img_to_data_uri(USER_AVATAR_PATH)
 ASSIST_AVATAR_URI = _img_to_data_uri(ASSIST_AVATAR_PATH)
-
 user_bg  = f"background-image:url('{USER_AVATAR_URI}');" if USER_AVATAR_URI else ""
 asst_bg  = f"background-image:url('{ASSIST_AVATAR_URI}');" if ASSIST_AVATAR_URI else ""
 
-css = """
+css = f"""
 <style>
-:root{
-  --bg:#f7f8fb; --sidebar-bg:#f5f7fb; --panel:#fff; --text:#0b1220;
-  --muted:#5d6b82; --accent:#2563eb; --border:#e7eaf2;
-  --bubble-user:#eef4ff; --bubble-assist:#f6f7fb;
-}
-html, body, [data-testid="stAppViewContainer"]{ background:var(--bg); color:var(--text); }
-section[data-testid="stSidebar"]{ background:var(--sidebar-bg); border-right:1px solid var(--border); }
-main .block-container{ padding-top:.6rem; }
-.container-narrow{ max-width:1080px; margin:0 auto; }
-.chat-card{ background:var(--panel); border:1px solid var(--border); border-radius:14px; box-shadow:0 6px 16px rgba(16,24,40,.05); overflow:hidden; }
-.chat-scroll{ max-height: 75vh; overflow:auto; padding:.65rem .9rem; }
-.msg{ display:flex; align-items:flex-start; gap:.65rem; margin:.45rem 0; }
-.avatar{ width:32px; height:32px; border-radius:50%; border:1px solid var(--border); background-size:cover; background-position:center; background-repeat:no-repeat; flex:0 0 32px; }
-.avatar.user {
-  """ + user_bg + """
-}
-.avatar.assistant {
-  """ + asst_bg + """
-}
-.bubble{ border:1px solid var(--border); background:var(--bubble-assist); padding:.8rem .95rem; border-radius:12px; max-width:860px; white-space:pre-wrap; line-height:1.45; }
-.msg.user .bubble{ background:var(--bubble-user); }
-.composer{ padding:.6rem .75rem; border-top:1px solid var(--border); background:#fff; position:sticky; bottom:0; z-index:2; }
-.status-inline{ width:100%; border:1px solid var(--border); background:#fafcff; border-radius:10px; padding:.5rem .7rem; font-size:.9rem; color:#111827; margin:.5rem 0 .8rem; }
-.smallcaps{ font-variant: all-small-caps; color:#475569; }
+:root{{ --bg:#f7f8fb; --sidebar-bg:#f5f7fb; --panel:#fff; --text:#0b1220;
+       --muted:#5d6b82; --accent:#2563eb; --border:#e7eaf2;
+       --bubble-user:#eef4ff; --bubble-assist:#f6f7fb; }}
+html, body, [data-testid="stAppViewContainer"]{{ background:var(--bg); color:var(--text); }}
+section[data-testid="stSidebar"]{{ background:var(--sidebar-bg); border-right:1px solid var(--border); }}
+main .block-container{{ padding-top:.6rem; }}
+.chat-card{{ background:var(--panel); border:1px solid var(--border); border-radius:14px; box-shadow:0 6px 16px rgba(16,24,40,.05); overflow:hidden; }}
+.chat-scroll{{ max-height: 75vh; overflow:auto; padding:.65rem .9rem; }}
+.msg{{ display:flex; align-items:flex-start; gap:.65rem; margin:.45rem 0; }}
+.avatar{{ width:32px; height:32px; border-radius:50%; border:1px solid var(--border); background-size:cover; background-position:center; background-repeat:no-repeat; flex:0 0 32px; }}
+.avatar.user {{ {user_bg} }}
+.avatar.assistant {{ {asst_bg} }}
+.bubble{{ border:1px solid var(--border); background:var(--bubble-assist); padding:.8rem .95rem; border-radius:12px; max-width:860px; white-space:pre-wrap; line-height:1.45; }}
+.msg.user .bubble{{ background:var(--bubble-user); }}
+.composer{{ padding:.6rem .75rem; border-top:1px solid var(--border); background:#fff; position:sticky; bottom:0; z-index:2; }}
+.status-inline{{ width:100%; border:1px solid var(--border); background:#fafcff; border-radius:10px; padding:.5rem .7rem; font-size:.9rem; color:#111827; margin:.5rem 0 .8rem; }}
 </style>
 """
 st.markdown(css, unsafe_allow_html=True)
 
-# --------------------- Helpers (minimal changes) ---------------------
-
+# --------------------- Helpers ---------------------
 def get_kb_dir() -> str:
     kb = os.path.abspath(os.path.join(".", "KB"))
     os.makedirs(kb, exist_ok=True)
@@ -251,7 +216,6 @@ def iter_files(folder: str) -> List[str]:
     return sorted(list(set(paths)))
 
 def compute_kb_signature(folder: str) -> Tuple[str, int]:
-    # We only index text/document files, but we still count all files for signature
     files = iter_files(folder)
     lines = []
     base = os.path.abspath(folder)
@@ -263,29 +227,23 @@ def compute_kb_signature(folder: str) -> Tuple[str, int]:
         except Exception:
             continue
     lines.sort()
-    raw = "\n".join(lines)
-    # Include the list of text/doc extensions used in indexing (signature changes when policy changes)
-    raw += str(SUPPORTED_TEXT_DOCS)
+    raw = "\n".join(lines) + str(SUPPORTED_TEXT_DOCS)
     return stable_hash(raw if raw else f"EMPTY-{time.time()}"), len(files)
 
-# --------------------- Loading (No changes needed) ---------------------
+# --------------------- Loading ---------------------
 def _fallback_read(path: str) -> str:
-    """Handles text extraction for simple/spreadsheet files not covered by LangChain loaders."""
     try:
         if path.lower().endswith(tuple(SPREADSHEET_EXTS)):
-            # Read first sheet, max 1000 rows, max 50 columns
             df = pd.read_excel(path).astype(str).iloc[:1000, :50]
             header = " | ".join(df.columns.tolist())
             body = "\n".join(" | ".join(row) for row in df.values.tolist())
             return f"Spreadsheet content from {Path(path).name}:\nColumns: {header}\nData:\n{body}"
         if path.lower().endswith((".csv", ".tsv")):
-            # Read max 1000 rows, max 50 columns
             sep = "\t" if path.lower().endswith(".tsv") else ","
             df = pd.read_csv(path, sep=sep).astype(str).iloc[:1000, :50]
             header = " | ".join(df.columns.tolist())
             body = "\n".join(" | ".join(row) for row in df.values.tolist())
             return f"CSV/TSV content from {Path(path).name}:\nColumns: {header}\nData:\n{body}"
-        # Fallback for generic text files
         return Path(path).read_text(encoding="utf-8", errors="ignore")
     except Exception as e:
         st.error(f"Error reading file {Path(path).name}: {e}")
@@ -293,18 +251,15 @@ def _fallback_read(path: str) -> str:
 
 def load_one(path: str) -> List[Document]:
     p = path.lower()
-
-    # 1. Media Files (Only logs and returns a placeholder document)
     if p.endswith(tuple(IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS)):
         doc_type = "Image" if p.endswith(tuple(IMAGE_EXTS)) else ("Audio" if p.endswith(tuple(AUDIO_EXTS)) else "Video")
         placeholder_content = (
             f"This document is a {doc_type} file. "
-            f"Full text content is unavailable as the system lacks the necessary {doc_type} processing (e.g., OCR, Transcription) capabilities. "
-            f"Metadata: Filename is {Path(path).name}."
+            f"Text content unavailable (requires OCR/transcription). "
+            f"Metadata: {Path(path).name}."
         )
         return [Document(page_content=placeholder_content, metadata={"source": path, "type": doc_type, "status": "placeholder"})]
 
-    # 2. Document/Text Files
     try:
         if p.endswith(".pdf"):
             return PyPDFLoader(path).load()
@@ -321,7 +276,6 @@ def load_one(path: str) -> List[Document]:
         if p.endswith(tuple(TEXT_EXTS | SPREADSHEET_EXTS | {".doc", ".odt"})):
             txt = _fallback_read(path)
             return [Document(page_content=txt, metadata={"source": path})] if txt.strip() else []
-        # Fallback
         txt = _fallback_read(path)
         return [Document(page_content=txt, metadata={"source": path})] if txt.strip() else []
     except Exception as e:
@@ -335,32 +289,23 @@ def load_documents(folder: str) -> List[Document]:
         docs.extend(load_one(path))
     return docs
 
-# --------------------- Full-document helpers (Removed FAISS-incompatible function) -----------------------------
-
+# --------------------- Full-document helpers ---------------------
 def _concat_docs(docs: List[Document]) -> str:
     parts = []
     for i, d in enumerate(docs, 1):
         meta = d.metadata or {}
         src = meta.get("source", "")
         page = meta.get("page")
-        hdr = (
-            f"\n\n--- [chunk {i} | page {page}] {Path(src).name} ---\n"
-            if page is not None else
-            f"\n\n--- [chunk {i}] {Path(src).name} ---\n"
-        )
+        hdr = (f"\n\n--- [chunk {i} | page {page}] {Path(src).name} ---\n" if page is not None
+               else f"\n\n--- [chunk {i}] {Path(src).name} ---\n")
         parts.append(hdr + (d.page_content or ""))
     return "".join(parts).strip()
 
 def read_whole_file_from_disk(path: str) -> str:
-    """Load a single file with the same loaders you use for indexing and return all text."""
     docs = load_one(path)
     return _concat_docs(docs)
 
 def read_whole_doc_by_name(name_or_stem: str, base_folder: str) -> Tuple[str, List[str]]:
-    """
-    Find file(s) in KB whose filename contains `name_or_stem` (case-insensitive),
-    load them fully, and return concatenated text + list of matched paths.
-    """
     name_or_stem = name_or_stem.lower().strip()
     candidates = [p for p in iter_files(base_folder) if name_or_stem in os.path.basename(p).lower()]
     texts = []
@@ -371,9 +316,7 @@ def read_whole_doc_by_name(name_or_stem: str, base_folder: str) -> Tuple[str, Li
             texts.append(f"[Error reading {os.path.basename(p)}: {e}]")
     return ("\n\n".join(t for t in texts if t.strip()) or ""), candidates
 
-# Removed: get_all_chunks_from_vectorstore (This relied on Chroma's specific metadata filtering.)
-
-# --------------------- Indexing (Refactored for FAISS persistence) ---------------------
+# --------------------- Indexing (FAISS) ---------------------
 @dataclass
 class ChunkingConfig:
     chunk_size: int = 1200
@@ -391,54 +334,48 @@ def _make_embeddings():
     st.session_state[key] = embeddings
     return embeddings
 
+def _faiss_dir(persist_dir: str, collection_name: str) -> Path:
+    return Path(persist_dir).expanduser().resolve() / collection_name
 
-def index_folder_langchain(folder: str, persist_dir: str, collection_name: str, emb_model: str, chunk_cfg: ChunkingConfig) -> Tuple[int, int]:
+def index_folder_langchain(folder: str, persist_dir: str, collection_name: str,
+                           emb_model: str, chunk_cfg: ChunkingConfig) -> Tuple[int, int]:
     raw_docs = load_documents(folder)
+
+    # If nothing to index, clear any previous FAISS index cleanly
+    faiss_dir = _faiss_dir(persist_dir, collection_name)
     if not raw_docs:
-        # Clear any old FAISS index if no documents are found
-        faiss_dir = Path(persist_dir) / collection_name
         if faiss_dir.exists():
-             for f in faiss_dir.glob("*"):
-                 os.remove(f)
-             os.rmdir(faiss_dir)
+            shutil.rmtree(faiss_dir, ignore_errors=True)
         return (0, 0)
-    
+
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_cfg.chunk_size,
-        chunk_overlap=chunk_cfg.chunk_overlap,
+        chunk_size=chunk_cfg.chunk_size, chunk_overlap=chunk_cfg.chunk_overlap,
         separators=["\n\n", "\n", ". ", " "]
     )
     splat = splitter.split_documents(raw_docs)
     embeddings = _make_embeddings()
-    
-    # --- FAISS CREATION ---
-    faiss_db = FAISS.from_documents(
-        documents=splat,
-        embedding=embeddings,
-    )
-    
-    # --- FAISS PERSISTENCE ---
-    faiss_db.save_local(folder_path=Path(persist_dir) / collection_name)
-    
+
+    faiss_db = FAISS.from_documents(documents=splat, embedding=embeddings)
+
+    faiss_dir.mkdir(parents=True, exist_ok=True)
+    # Save as folder (compatible with current LC versions)
+    faiss_db.save_local(str(faiss_dir))
     return (len(raw_docs), len(splat))
 
 def get_vectorstore(persist_dir: str, collection_name: str, emb_model: str) -> Optional[FAISS]:
     key = f"_vs::{persist_dir}::{collection_name}::{emb_model}"
     if key in st.session_state:
         return st.session_state[key]
-    
-    faiss_path = Path(persist_dir) / collection_name
-    if not faiss_path.exists():
-        return None # Index hasn't been created yet
 
-    embeddings = _make_embeddings() # FAISS requires the embedding function to be passed during load
-    
+    faiss_path = _faiss_dir(persist_dir, collection_name)
+    if not faiss_path.exists():
+        return None
+
     try:
-        # --- FAISS LOADING ---
         vs = FAISS.load_local(
-            folder_path=faiss_path,
-            embeddings=_make_embeddings(), # Must recreate the embeddings object on load
-            allow_dangerous_deserialization=True # Necessary for loading some LangChain FAISS index formats
+            folder_path=str(faiss_path),
+            embeddings=_make_embeddings(),
+            allow_dangerous_deserialization=True,
         )
         st.session_state[key] = vs
         return vs
@@ -446,7 +383,7 @@ def get_vectorstore(persist_dir: str, collection_name: str, emb_model: str) -> O
         st.error(f"Failed to load FAISS index from disk. Error: {e}")
         return None
 
-# --------------------- Anthropic init helpers (No changes needed) ---------------------
+# --------------------- Anthropic init helpers ---------------------
 def _strip_proxy_env() -> None:
     for v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "NO_PROXY", "no_proxy"):
         os.environ.pop(v, None)
@@ -469,7 +406,6 @@ def _get_secret_api_key() -> Optional[str]:
                     v = ns.get(k)
                     if isinstance(v, str) and v.strip():
                         return v.strip()
-
     for k in ("ANTHROPIC_API_KEY","anthropic_api_key","CLAUDE_API_KEY","claude_api_key"):
         v = os.getenv(k)
         if isinstance(v, str) and v.strip():
@@ -488,39 +424,26 @@ def _anthropic_client_from_secrets():
         return _AnthropicClientOld(api_key=api_key)
     raise RuntimeError("Anthropic SDK not installed correctly.")
 
-# --------------------- Chain builders (Updated type hint) ---------------------
-
+# --------------------- Chain builders ---------------------
 def make_llm(backend: str, model_name: str, temperature: float):
     if backend.startswith("Claude"):
         client = _anthropic_client_from_secrets()
-        return ClaudeDirect(
-            client=client,
-            model=model_name or DEFAULT_CLAUDE,
-            temperature=temperature,
-            max_tokens=800,
-        )
+        return ClaudeDirect(client=client, model=model_name or DEFAULT_CLAUDE,
+                            temperature=temperature, max_tokens=800)
     return ChatOllama(model=model_name or DEFAULT_OLLAMA, temperature=temperature)
 
-def make_chain(vs: VectorStoreType, llm: BaseChatModel, k: int): # <--- CHANGED TYPE HINT
+def make_chain(vs: VectorStoreType, llm: BaseChatModel, k: int):
     retriever = vs.as_retriever(search_kwargs={"k": k})
-    memory = ConversationBufferMemory(
-        memory_key="chat_history",
-        output_key="answer",
-        return_messages=True
-    )
+    memory = ConversationBufferMemory(memory_key="chat_history", output_key="answer", return_messages=True)
     return ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=retriever,
-        memory=memory,
-        return_source_documents=True,
-        verbose=False,
+        llm=llm, retriever=retriever, memory=memory, return_source_documents=True, verbose=False
     )
 
-# --------------------- Defaults + auto-index (Updated type hint) ---------------------
+# --------------------- Defaults + auto-index ---------------------
 def settings_defaults() -> Dict[str, Any]:
     kb_dir = get_kb_dir()
     return {
-        "persist_dir": ".faiss_index", # <--- CHANGED DEFAULT DIRECTORY NAME
+        "persist_dir": ".faiss_index",
         "collection_name": f"kb-{stable_hash(kb_dir)}",
         "base_folder": kb_dir,
         "emb_model": _EMB_MODEL,
@@ -533,7 +456,7 @@ def settings_defaults() -> Dict[str, Any]:
         "auto_index_min_interval_sec": 8,
     }
 
-def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optional[VectorStoreType]: # <--- CHANGED TYPE HINT
+def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optional[VectorStoreType]:
     folder = st.session_state.get("base_folder")
     persist = st.session_state.get("persist_dir")
     colname = st.session_state.get("collection_name")
@@ -548,41 +471,35 @@ def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optiona
     need_index = (last_sig != sig_now) or (last_sig is None)
     throttled = (now - last_time) < min_gap
     target = status_placeholder if status_placeholder is not None else st
-    
-    # Check if the FAISS index files exist on disk
-    faiss_path = Path(persist) / colname
-    index_exists = faiss_path.is_dir() and any(faiss_path.iterdir())
 
+    faiss_path = _faiss_dir(persist, colname)
+    index_exists = faiss_path.is_dir() and any(faiss_path.iterdir())
 
     if need_index and not throttled:
         try:
             target.markdown('<div class="status-inline">Indexing…</div>', unsafe_allow_html=True)
-            n_docs, n_chunks = index_folder_langchain(
-                folder, persist, colname, emb_model,
-                st.session_state.get("chunk_cfg", ChunkingConfig())
-            )
+            n_docs, n_chunks = index_folder_langchain(folder, persist, colname, emb_model,
+                                                      st.session_state.get("chunk_cfg", ChunkingConfig()))
             st.session_state["_kb_last_sig"] = sig_now
             st.session_state["_kb_last_index_ts"] = now
             st.session_state["_kb_last_counts"] = {"files": file_count, "docs": n_docs, "chunks": n_chunks}
-            label = f"Indexed: <b>{n_docs}</b> text/doc files processed, resulting in <b>{n_chunks}</b> chunks"
+            label = f"Indexed: <b>{n_docs}</b> files → <b>{n_chunks}</b> chunks"
         except Exception as e:
             label = f"Auto-index failed: <b>{e}</b>"
         target.markdown(f'<div class="status-inline">{label}</div>', unsafe_allow_html=True)
     elif not index_exists:
-         # Force re-index if the signature is the same but the file is missing (e.g., first run or cleanup)
         try:
-            target.markdown('<div class="status-inline">Indexing (FAISS index missing)…</div>', unsafe_allow_html=True)
-            n_docs, n_chunks = index_folder_langchain(
-                folder, persist, colname, emb_model,
-                st.session_state.get("chunk_cfg", ChunkingConfig())
-            )
+            target.markdown('<div class="status-inline">Index missing — building…</div>', unsafe_allow_html=True)
+            n_docs, n_chunks = index_folder_langchain(folder, persist, colname, emb_model,
+                                                      st.session_state.get("chunk_cfg", ChunkingConfig()))
             st.session_state["_kb_last_sig"] = sig_now
             st.session_state["_kb_last_index_ts"] = now
             st.session_state["_kb_last_counts"] = {"files": file_count, "docs": n_docs, "chunks": n_chunks}
-            label = f"Indexed: <b>{n_docs}</b> text/doc files processed, resulting in <b>{n_chunks}</b> chunks"
+            target.markdown(f'<div class="status-inline">Indexed: <b>{n_docs}</b> files → <b>{n_chunks}</b> chunks</div>',
+                            unsafe_allow_html=True)
         except Exception as e:
-            label = f"Auto-index failed: <b>{e}</b>"
-        target.markdown(f'<div class="status-inline">{label}</div>', unsafe_allow_html=True)
+            target.markdown(f'<div class="status-inline">Auto-index failed: <b>{e}</b></div>',
+                            unsafe_allow_html=True)
     else:
         ts = st.session_state.get("_kb_last_index_ts")
         when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else "—"
@@ -596,10 +513,8 @@ def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optiona
     except Exception:
         return None
 
-# --------------------- UI Functions (No changes needed) ---------------------
-
+# --------------------- UI Functions ---------------------
 def render_sidebar():
-    """Renders the entire Streamlit sidebar with settings."""
     with st.sidebar:
         lp = _resolve_logo_path()
         if lp and Path(lp).exists():
@@ -613,14 +528,12 @@ def render_sidebar():
         st.subheader("⚙️ Settings")
         st.caption("Auto-index is enabled. Edit paths/models below if needed.")
 
-        # --- KB Settings ---
         st.session_state["base_folder"] = st.text_input("Knowledge Base Folder", value=st.session_state["base_folder"])
-        st.session_state["persist_dir"] = st.text_input("FAISS Persist Directory (Base)", value=st.session_state["persist_dir"]) # <--- UPDATED TEXT
-        st.session_state["collection_name"] = st.text_input("FAISS Index Folder Name", value=st.session_state["collection_name"]) # <--- UPDATED TEXT
+        st.session_state["persist_dir"] = st.text_input("FAISS Persist Directory (Base)", value=st.session_state["persist_dir"])
+        st.session_state["collection_name"] = st.text_input("FAISS Index Folder Name", value=st.session_state["collection_name"])
 
         st.divider()
 
-        # --- LLM Settings ---
         st.session_state["backend"] = st.radio("LLM Backend", ["Claude (Anthropic)", "Ollama (local)"], index=0, key="llm_backend_radio")
         if st.session_state["backend"].startswith("Claude"):
             st.session_state["claude_model"] = st.text_input("Claude Model Name", value=st.session_state["claude_model"])
@@ -629,52 +542,44 @@ def render_sidebar():
 
         st.session_state["temperature"] = st.slider("Temperature", 0.0, 1.0, 0.2, 0.05)
         st.session_state["top_k"] = st.slider("Top-K (Retrieval)", 1, 15, 5)
-        st.session_state["auto_index_min_interval_sec"] = st.number_input(
-            "Auto-index min interval (sec)", min_value=1, max_value=300, value=8, step=1
-        )
+        st.session_state["auto_index_min_interval_sec"] = st.number_input("Auto-index min interval (sec)", 1, 300, 8, 1)
 
-        # st.markdown(f"**Supported Document Types:** `{', '.join(sorted(SUPPORTED_TEXT_DOCS))}`")
-        # st.markdown(f"**Media Files (Placeholder Only):** `{', '.join(sorted(IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS))}`")
-
-        # Anthropic status
-        # try:
-        #     import anthropic as _anth
-        #     st.caption(f"anthropic=={getattr(_anth, '__version__', 'unknown')} • direct client mode")
-        # except Exception:
-        #     st.caption("anthropic not importable")
+def _avatar_for_role(role: str) -> Optional[str]:
+    if role == "user" and USER_AVATAR_PATH:
+        return str(USER_AVATAR_PATH)
+    if role == "assistant" and ASSIST_AVATAR_PATH:
+        return str(ASSIST_AVATAR_PATH)
+    return None
 
 def render_chat_history():
-    """Renders the chat history using st.chat_message."""
     for message in st.session_state["messages"]:
-        with st.chat_message(message["role"]):
+        role = message["role"]
+        with st.chat_message(role, avatar=_avatar_for_role(role)):
             st.markdown(message["content"])
 
-# --------------------- Main Execution Logic (Updated type hint) ---------------------
+# --------------------- Main Execution Logic ---------------------
+def make_llm_and_chain(vs: VectorStoreType):
+    backend = st.session_state["backend"]
+    model_name = st.session_state["claude_model"] if backend.startswith("Claude") else st.session_state["ollama_model"]
+    llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
+    chain = make_chain(vs, llm, int(st.session_state["top_k"]))
+    return llm, chain, backend
 
-def handle_user_input(query: str, vs: Optional[VectorStoreType]): # <--- CHANGED TYPE HINT
-    """Processes the user query, updates history, and runs the RAG chain."""
-
-    # 1) Append user message
+def handle_user_input(query: str, vs: Optional[VectorStoreType]):
     st.session_state["messages"].append({"role": "user", "content": query})
 
-    # 2) Full-document commands (bypass retriever)
+    # Full-document commands
     m = re.match(r"^\s*(read|open|show)\s+(.+)$", query, flags=re.IGNORECASE)
     if m:
         target = m.group(2).strip().strip('"').strip("'")
         full_text, files = read_whole_doc_by_name(target, st.session_state["base_folder"])
         if not files:
-            st.session_state["messages"].append(
-                {"role": "assistant", "content": f"Couldn't find a file containing “{target}” in the Knowledge Base folder."}
-            )
-            st.rerun()
-            return
+            st.session_state["messages"].append({"role": "assistant", "content": f"Couldn't find a file containing “{target}” in the Knowledge Base folder."})
+            st.rerun(); return
 
-        # Summarize if very large, else show content
         if len(full_text) > 8000:
             try:
-                backend = st.session_state["backend"]
-                model_name = st.session_state["claude_model"] if backend.startswith("Claude") else st.session_state["ollama_model"]
-                llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
+                llm, _, _ = make_llm_and_chain(vs or FAISS.from_texts([""], _make_embeddings()))
                 summary = llm.predict(f"Summarize the following document comprehensively:\n\n{full_text[:180000]}")
                 reply = f"**Full-document summary for:** {', '.join(Path(p).name for p in files)}\n\n{summary}"
             except Exception as e:
@@ -683,37 +588,22 @@ def handle_user_input(query: str, vs: Optional[VectorStoreType]): # <--- CHANGED
             reply = f"**Full document content:**\n\n{full_text}"
 
         st.session_state["messages"].append({"role": "assistant", "content": reply})
-        st.rerun()
-        return
+        st.rerun(); return
 
-    # 3) Short-circuit for simple greetings (reply exactly "Hello")
+    # Greetings → exactly "Hello"
     if GREETING_RE.match(query):
         st.session_state["messages"].append({"role": "assistant", "content": "Hello"})
-        st.rerun()
-        return
+        st.rerun(); return
 
-    # 4) Check Vector Store
+    # Need vector store
     if vs is None:
-        st.session_state["messages"].append(
-            {"role": "assistant", "content": "Vector store unavailable. Check your settings and ensure the FAISS index exists."}
-        )
-        st.rerun()
-        return
+        st.session_state["messages"].append({"role": "assistant", "content": "Vector store unavailable. Check your settings and ensure the FAISS index exists."})
+        st.rerun(); return
 
-    # 5) Initialize LLM
-    backend = st.session_state["backend"]
-    model_name = st.session_state["claude_model"] if backend.startswith("Claude") else st.session_state["ollama_model"]
-    try:
-        llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
-    except Exception as e:
-        st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
-        st.rerun()
-        return
-
-    # 6) Run RAG Chain
-    chain = make_chain(vs, llm, int(st.session_state["top_k"]))
+    # RAG
     t0 = time.time()
     try:
+        _, chain, backend = make_llm_and_chain(vs)
         with st.spinner(f"Querying {backend} with RAG..."):
             result = chain.invoke({"question": query})
             answer = result.get("answer", "").strip() or "I could not find an answer in the Knowledge Base."
@@ -723,42 +613,31 @@ def handle_user_input(query: str, vs: Optional[VectorStoreType]): # <--- CHANGED
     except Exception as e:
         msg = f"RAG error: {e}"
 
-    # 7) Append assistant message
     st.session_state["messages"].append({"role": "assistant", "content": msg})
     st.rerun()
 
 def main():
-    # 1) Initialize session state defaults
     for k, v in settings_defaults().items():
         st.session_state.setdefault(k, v)
 
-    # 2) Render UI
     render_sidebar()
 
-    # Title & Index Status
     st.markdown("### 💬 Chat with your Knowledge Base (LangChain RAG)")
     hero_status = st.container()
     vs = auto_index_if_needed(status_placeholder=hero_status)
 
-    # Initial Chat History
-    st.session_state.setdefault(
-        "messages",
-        [{"role": "assistant", "content": "Hi! Ask anything about your Knowledge Base."}],
-    )
+    st.session_state.setdefault("messages", [{"role": "assistant", "content": "Hi! Ask anything about your Knowledge Base."}])
 
-    # Chat UI container
     st.markdown('<div class="chat-card">', unsafe_allow_html=True)
     st.markdown('<div class="chat-scroll">', unsafe_allow_html=True)
     render_chat_history()
     st.markdown("</div>", unsafe_allow_html=True)  # End chat-scroll
 
-    # Composer (native chat input)
     st.markdown('<div class="composer">', unsafe_allow_html=True)
     user_text = st.chat_input("Type your question...", key="user_prompt_input")
     st.markdown("</div>", unsafe_allow_html=True)  # End composer
     st.markdown("</div>", unsafe_allow_html=True)  # End chat-card
 
-    # 3) Handle User Input
     if user_text and user_text.strip():
         handle_user_input(user_text.strip(), vs)
 
