@@ -117,7 +117,7 @@ def _resolve_avatar_paths() -> Tuple[Optional[Path], Optional[Path]]:
     env_asst = os.getenv("ASSISTANT_AVATAR_PATH")
     user_candidates = [Path.cwd() / "assets" / "avatar.png",
                        Path(env_user).expanduser().resolve() if env_user else None]
-    asst_candidates = [Path.cwd() / "assets" / "Forecast360.png",
+    asst_candidates = [Path.cwd() / "assets" / "llm.png",
                        Path(env_asst).expanduser().resolve() if env_asst else None]
     user = next((p for p in user_candidates if p and p.exists()), None)
     asst = next((p for p in asst_candidates if p and p.exists()), None)
