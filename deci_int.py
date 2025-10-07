@@ -1,5 +1,5 @@
 # Author: Amitesh Jha | iSoft | 2025-10-07
-# Streamlit + LangChain RAG app — hardened Anthropic init and CPU-safe embeddings.
+# Streamlit + LangChain RAG app — CPU-safe embeddings + Anthropic proxies-proof init.
 
 from __future__ import annotations
 import os, glob, time, base64, hashlib, logging
@@ -31,7 +31,7 @@ from langchain.memory import ConversationBufferMemory
 # LLMs
 from langchain_anthropic import ChatAnthropic
 
-# Prefer Anthropic(new) but fallback to Client(old) if needed
+# Anthropic SDK (new & old)
 try:
     from anthropic import Anthropic as _AnthropicClientNew
 except Exception:
@@ -50,6 +50,55 @@ from langchain_community.document_loaders import (
     PyPDFLoader, BSHTMLLoader, Docx2txtLoader, CSVLoader
 )
 
+# --------------------- Minimal direct Claude model (bypass proxies kw path) ---------------------
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+
+class ClaudeDirect(BaseChatModel):
+    model: str = "claude-sonnet-4-5"
+    temperature: float = 0.2
+    max_tokens: int = 800
+    _client: object = None  # Anthropic client set at init
+
+    def __init__(self, client, **kwargs):
+        super().__init__(**kwargs)
+        object.__setattr__(self, "_client", client)
+
+    @property
+    def _llm_type(self) -> str:
+        return "claude_direct"
+
+    def _convert_msgs(self, messages: list[BaseMessage]):
+        out = []
+        for m in messages:
+            role = "user" if m.type == "human" else ("assistant" if m.type == "ai" else "user")
+            if isinstance(m.content, str):
+                text = m.content
+            else:
+                parts = m.content or []
+                text = "".join(p.get("text","") if isinstance(p, dict) else str(p) for p in parts)
+            out.append({"role": role, "content": [{"type": "text", "text": text}]})
+        return out
+
+    def _generate(self, messages: list[BaseMessage], stop=None, run_manager=None, **kwargs) -> ChatResult:
+        amsgs = self._convert_msgs(messages)
+        resp = self._client.messages.create(
+            model=self.model,
+            messages=amsgs,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        )
+        text = ""
+        for blk in getattr(resp, "content", []) or []:
+            if getattr(blk, "type", None) == "text":
+                text += getattr(blk, "text", "") or ""
+            elif isinstance(blk, dict) and blk.get("type") == "text":
+                text += blk.get("text", "") or ""
+        ai = AIMessage(content=text)
+        return ChatResult(generations=[ChatGeneration(message=ai)])
+
+# --------------------- UI / THEME ---------------------
 st.set_page_config(page_title="LLM Chat • LangChain RAG", page_icon="💬", layout="wide")
 
 def _resolve_logo_path() -> Optional[Path]:
@@ -79,14 +128,14 @@ def _img_to_data_uri(path: Optional[Path]) -> Optional[str]:
     ext = (path.suffix.lower().lstrip(".") or "png")
     mime = "image/png" if ext in ("png", "apng") else ("image/jpeg" if ext in ("jpg", "jpeg") else "image/svg+xml")
     return f"data:{mime};base64,{b64}"
-# Resolve avatar file paths and convert to data URIs BEFORE use
+
+# Resolve avatars before CSS
 USER_AVATAR_PATH, ASSIST_AVATAR_PATH = _resolve_avatar_paths()
 USER_AVATAR_URI = _img_to_data_uri(USER_AVATAR_PATH)
 ASSIST_AVATAR_URI = _img_to_data_uri(ASSIST_AVATAR_PATH)
-# Build dynamic background-image declarations
+
 user_bg  = f"background-image:url('{USER_AVATAR_URI}');" if USER_AVATAR_URI else ""
 asst_bg  = f"background-image:url('{ASSIST_AVATAR_URI}');" if ASSIST_AVATAR_URI else ""
-
 
 css = """
 <style>
@@ -118,7 +167,6 @@ main .block-container{{ padding-top:.6rem; }}
 """.format(user_bg=user_bg, asst_bg=asst_bg)
 
 st.markdown(css, unsafe_allow_html=True)
-
 
 # --------------------- Helpers ---------------------
 TEXT_EXTS = {".txt", ".md", ".rtf", ".html", ".htm", ".json", ".xml"}
@@ -220,19 +268,8 @@ _EMB_MODEL_KW = {
     "trust_remote_code": False,
 }
 _ENCODE_KW = {
-    "normalize_embeddings": True,  # OK to keep
-    # do NOT include show_progress_bar here
+    "normalize_embeddings": True,
 }
-
-def _make_embeddings():
-    return HuggingFaceEmbeddings(
-        model_name=_EMB_MODEL,
-        model_kwargs=_EMB_MODEL_KW,
-        encode_kwargs=_ENCODE_KW,
-        # optionally control progress here (not in encode_kwargs):
-        # show_progress_bar=False,
-    )
-
 
 def _make_embeddings():
     return HuggingFaceEmbeddings(
@@ -266,13 +303,30 @@ def _strip_proxy_env() -> None:
         os.environ.pop(v, None)
 
 def _get_secret_api_key() -> Optional[str]:
-    for k in ("ANTHROPIC_API_KEY", "anthropic_api_key", "claude_api_key"):
-        try:
-            if k in st.secrets:
-                return st.secrets[k]
-        except Exception:
-            pass
-    return os.getenv("ANTHROPIC_API_KEY")
+    # robust: flat and nested
+    try:
+        s = st.secrets
+    except Exception:
+        s = None
+
+    if s:
+        for k in ("ANTHROPIC_API_KEY","anthropic_api_key","CLAUDE_API_KEY","claude_api_key"):
+            v = s.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        for parent in ("anthropic","claude","secrets"):
+            if parent in s and isinstance(s[parent], dict):
+                ns = s[parent]
+                for k in ("api_key","ANTHROPIC_API_KEY","key","token"):
+                    v = ns.get(k)
+                    if isinstance(v, str) and v.strip():
+                        return v.strip()
+
+    for k in ("ANTHROPIC_API_KEY","anthropic_api_key","CLAUDE_API_KEY","claude_api_key"):
+        v = os.getenv(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
 
 def _anthropic_client_from_secrets():
     _strip_proxy_env()
@@ -293,7 +347,10 @@ DEFAULT_CLAUDE = "claude-sonnet-4-5"
 def make_llm(backend: str, model_name: str, temperature: float):
     if backend.startswith("Claude"):
         client = _anthropic_client_from_secrets()
-        return ChatAnthropic(client=client, model=model_name, temperature=temperature, max_tokens=800)
+        try:
+            return ChatAnthropic(client=client, model=model_name, temperature=temperature, max_tokens=800)
+        except TypeError as e:
+            return ClaudeDirect(client=client, model=model_name, temperature=temperature, max_tokens=800)
     return ChatOllama(model=model_name, temperature=temperature)
 
 def make_chain(vs: Chroma, llm, k: int):
@@ -404,7 +461,7 @@ def main():
     for m in st.session_state["messages"]:
         who = "user" if m["role"] == "user" else "assistant"
         st.markdown(f'<div class="msg {who}"><div class="avatar {who}"></div><div class="bubble">{m["content"]}</div></div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
     st.session_state.setdefault("_compose_nonce", 0)
     compose_key = f"compose_input_{st.session_state['_compose_nonce']}"
@@ -415,8 +472,8 @@ def main():
         user_text = st.text_area("Message", key=compose_key, placeholder="Type your question…", label_visibility="collapsed")
     with c2:
         send = st.button("Send", use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
     if send and user_text and user_text.strip():
         query = user_text.strip()
