@@ -156,10 +156,13 @@ def _resolve_logo_path() -> Optional[Path]:
 def _resolve_avatar_paths() -> Tuple[Optional[Path], Optional[Path]]:
     env_user = os.getenv("USER_AVATAR_PATH")
     env_asst = os.getenv("ASSISTANT_AVATAR_PATH")
-    user_candidates = [Path.cwd() / "assets" / "avatar.png",
+    
+    # Defaults to assets/avatar.png for user and assets/llm.png for assistant
+    user_candidates = [Path.cwd() / "assets" / "avatar.png", 
                        Path(env_user).expanduser().resolve() if env_user else None]
-    asst_candidates = [Path.cwd() / "assets" / "llm.png",
+    asst_candidates = [Path.cwd() / "assets" / "llm.png", 
                        Path(env_asst).expanduser().resolve() if env_asst else None]
+                       
     user = next((p for p in user_candidates if p and p.exists()), None)
     asst = next((p for p in asst_candidates if p and p.exists()), None)
     return user, asst
