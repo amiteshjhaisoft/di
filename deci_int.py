@@ -561,39 +561,97 @@ def split_text_recursive(text: str, cfg: ChunkingConfig) -> List[str]:
 
 # ----- Chroma -----
 
-def get_chroma_client(persist_dir: str) -> chromadb.Client:
+
+def get_chroma_client(persist_dir: str) -> "chromadb.Client":
     """
-    Return a local chroma client using DuckDB+Parquet persistent store.
-    If the existing persistence folder appears corrupted (causing errors),
-    this function will attempt to reset the directory and recreate a fresh DB.
-    WARNING: resetting the directory will delete previously persisted embeddings.
+    Robust Chroma client creation:
+      - uses duckdb+parquet local backend
+      - tries PersistentClient fallback if available
+      - logs full tracebacks to /tmp/chroma-init-error.log for debugging
+    WARNING: if you allow the function to delete persist_dir it will drop persisted embeddings.
     """
-    import os
-    from chromadb.config import Settings
+    import os, traceback, shutil, time
+    from typing import Optional
+
+    def _log_chroma_error(err: Exception, label: str = "chroma_init"):
+        log_path = "/tmp/chroma-init-error.log"
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"\n\n---- {label} at {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())} ----\n")
+                traceback.print_exc(file=f)
+                f.write("\n")
+        except Exception:
+            pass
+
+    try:
+        import chromadb
+        from chromadb.config import Settings
+    except Exception as imp_e:
+        raise RuntimeError(f"Failed importing chromadb or Settings: {imp_e}") from imp_e
 
     os.makedirs(persist_dir, exist_ok=True)
-
     settings = Settings(
         anonymized_telemetry=True,
         chroma_db_impl="duckdb+parquet",
         persist_directory=persist_dir,
     )
 
+    # Attempt 1: normal Client with duckdb+parquet
     try:
         client = chromadb.Client(settings=settings)
         return client
-    except Exception as e:
-        # Attempt recovery by removing the persistence dir and retrying once.
+    except Exception as e1:
+        _log_chroma_error(e1, label="client_initial_failure")
+
+    # Attempt safe backup and remove existing persistence directory
+    try:
+        # try to back up existing dir (best-effort)
         try:
-            shutil.rmtree(persist_dir)
+            backup_dir = f"{persist_dir}_backup_{int(time.time())}"
+            if os.path.exists(persist_dir):
+                shutil.copytree(persist_dir, backup_dir)
         except Exception:
-            raise RuntimeError(f"Chroma init failed and cleanup failed: {e}")
-        os.makedirs(persist_dir, exist_ok=True)
-        try:
-            client = chromadb.Client(settings=settings)
-            return client
-        except Exception as e2:
-            raise RuntimeError(f"Chroma init failed after reset: {e2}")
+            pass
+
+        shutil.rmtree(persist_dir)
+    except Exception as rm_err:
+        _log_chroma_error(rm_err, label="cleanup_failure")
+        raise RuntimeError(f"Chroma init failed and cleanup failed: {e1}") from e1
+
+    # recreate dir and try again
+    os.makedirs(persist_dir, exist_ok=True)
+
+    try:
+        client = chromadb.Client(settings=settings)
+        return client
+    except Exception as e2:
+        _log_chroma_error(e2, label="client_after_reset_failure")
+
+    # Try PersistentClient fallback if available
+    try:
+        if hasattr(chromadb, "PersistentClient"):
+            try:
+                # different chromadb versions have different constructor signatures
+                try:
+                    client = chromadb.PersistentClient(persist_directory=persist_dir)
+                except TypeError:
+                    # alternate signature
+                    client = chromadb.PersistentClient(path=persist_dir)
+                return client
+            except Exception as e3:
+                _log_chroma_error(e3, label="persistent_client_failure")
+        else:
+            _log_chroma_error(RuntimeError("PersistentClient not present in chromadb"), label="persistent_client_missing")
+    except Exception as e:
+        _log_chroma_error(e, label="persistent_client_outer")
+
+    raise RuntimeError(
+        "Chroma init failed after reset. See /tmp/chroma-init-error.log for full traceback. "
+        "Common causes: corrupted .chroma folder, missing native deps (duckdb/hnswlib), or permission issues."
+    )
+
+
+
 def get_sentence_transformer_fn(model_name: str):
     return embedding_functions.SentenceTransformerEmbeddingFunction(model_name=model_name, device=None)
 
