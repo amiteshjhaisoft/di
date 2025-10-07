@@ -463,24 +463,68 @@ def main():
         )
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # --- composer UI (Fix A: nonce-based key so we don't mutate widget value) ---
+    st.session_state.setdefault("_compose_nonce", 0)
+    compose_key = f"compose_input_{st.session_state['_compose_nonce']}"
+
     st.markdown('<div class="composer">', unsafe_allow_html=True)
     c1, c2 = st.columns([1, 0.2])
     with c1:
-        user_text = st.text_area("Message", key="compose_input", placeholder="Type your question…", label_visibility="collapsed")
+        user_text = st.text_area(
+            "Message",
+            key=compose_key,
+            placeholder="Type your question…",
+            label_visibility="collapsed",
+        )
     with c2:
         send = st.button("Send", use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # Handle send
+    # --- send handling ---
     if send and user_text and user_text.strip():
         query = user_text.strip()
         st.session_state["messages"].append({"role": "user", "content": query})
 
         if vs is None:
-            st.session_state["messages"].append({"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."})
-            st.session_state["compose_input"] = ""
+            st.session_state["messages"].append(
+                {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
+            )
+            # Clear by bumping the nonce and rerun
+            st.session_state["_compose_nonce"] += 1
             st.rerun()
+
+        # LLM
+        backend = st.session_state["backend"]
+        model_name = st.session_state["claude_model"] if backend.startswith("Claude") else st.session_state["ollama_model"]
+        try:
+            llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
+        except Exception as e:
+            st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
+            st.session_state["_compose_nonce"] += 1
+            st.rerun()
+
+        # Chain
+        chain = make_chain(vs, llm, int(st.session_state["top_k"]))
+
+        t0 = time.time()
+        try:
+            result = chain.invoke({"question": query})
+            answer = result.get("answer", "").strip() or "(no answer)"
+            sources = result.get("source_documents", []) or []
+            cited = []
+            for i, d in enumerate(sources, start=1):
+                src = (d.metadata or {}).get("source", "unknown")
+                cited.append(f"[{i}] {src}")
+            citation_block = ("\n\nSources:\n" + "\n".join(cited)) if cited else ""
+            msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
+        except Exception as e:
+            msg = f"RAG error: {e}"
+        st.session_state["messages"].append({"role": "assistant", "content": msg})
+
+        # ✅ Clear input by incrementing the nonce (no direct value mutation)
+        st.session_state["_compose_nonce"] += 1
+        st.rerun()
 
         # LLM
         backend = st.session_state["backend"]
