@@ -1,35 +1,27 @@
-# requirements.txt — LangChain RAG Streamlit app
-# Python 3.10+ recommended
+# --- Core app ---
+streamlit==1.37.1
 
-# --- App / UI ---
-streamlit>=1.36,<1.41
+# --- LangChain stack (aligned pins) ---
+langchain==0.2.15
+langchain-community==0.2.15
+langchain-anthropic==0.1.23
+anthropic==0.39.0
 
-# --- LangChain core + integrations ---
-langchain>=0.2.10,<0.3.0
-langchain-community>=0.2.10,<0.3.0
-langchain-anthropic>=0.1.20,<0.2.0
-
-# --- Vector store ---
-chromadb>=0.5.3,<0.6.0
+# --- Vector DB ---
+chromadb==0.5.5
+hnswlib==0.8.0
 
 # --- Embeddings ---
-sentence-transformers>=2.6.1,<3.0.0
+sentence-transformers==2.7.0
+# CPU build; if you have CUDA, replace with the appropriate torch extra (e.g., +cu121)
+torch>=2.1.0
 
 # --- Loaders / parsing ---
-pypdf>=4.2.0,<6.0.0
-python-docx>=1.1.0
-python-pptx>=0.6.23
-openpyxl>=3.1.2,<4.0.0
-beautifulsoup4>=4.12.2,<5.0.0
-lxml>=5.1.0,<6.0.0
+pypdf==4.2.0
+docx2txt==0.8
+beautifulsoup4==4.12.3
+lxml==5.2.1
+pandas==2.2.2
 
-# --- LLM SDK (for Claude) ---
-anthropic>=0.34.0,<0.40.0
-
-# --- Data stack ---
-pandas>=2.2.1,<3.0.0
-numpy>=1.26,<3.0
-
-# Optional (speedups / utilities)
-# hnswlib>=0.8.0           # optional: faster ANN for Chroma (if available for your platform)
-# tiktoken>=0.7,<0.8       # optional: token utilities
+# --- Optional quality-of-life ---
+python-dotenv==1.0.1
