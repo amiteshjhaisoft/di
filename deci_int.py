@@ -944,7 +944,17 @@ def auto_index_if_needed(status_placeholder=None):
     emb_model = st.session_state["emb_model"]
     min_gap = int(st.session_state.get("auto_index_min_interval_sec", 8))
 
+try:
     client = get_chroma_client(persist)
+except Exception as e:
+    # If Chroma initialization fails, show a user-facing warning and skip auto-indexing.
+    # The detailed traceback is logged to /tmp/chroma-init-error.log by get_chroma_client.
+    try:
+        st.warning(f"Chroma unavailable or failed to initialize: {e}. RAG features will be disabled. Check logs (/tmp/chroma-init-error.log) for details.")
+    except Exception:
+        pass
+    return None
+
 
     sig_now, file_count = compute_kb_signature(folder)
     last_sig = st.session_state.get("_kb_last_sig")
