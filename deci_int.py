@@ -56,7 +56,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 class ClaudeDirect(BaseChatModel):
-    model: str = "claude-3-5-sonnet-20240620"   # valid model id
+    model: str = "claude-sonnet-4-5"   # valid model id
     temperature: float = 0.2
     max_tokens: int = 800
     _client: object = None  # Anthropic client set at init
@@ -344,7 +344,7 @@ def _anthropic_client_from_secrets():
 
 # --------------------- Chain builders ---------------------
 DEFAULT_OLLAMA = "llama3.2"
-DEFAULT_CLAUDE = "claude-3-5-sonnet-20240620"
+DEFAULT_CLAUDE = "claude-sonnet-4-5"
 
 def make_llm(backend: str, model_name: str, temperature: float):
     if backend.startswith("Claude"):
