@@ -26,8 +26,6 @@ from pathlib import Path
 import requests
 import pandas as pd
 import streamlit as st
-import shutil
-import inspect
 
 # -------------------------------------------------------------------
 # Paths & helpers
@@ -262,109 +260,6 @@ div[data-testid="stDecoration"]{{ display:none; }}
 # -------------------------------------------------------------------
 # Utilities
 # -------------------------------------------------------------------
-
-
-# ---- Streamlit image compatibility wrapper ----
-def st_image_compat(*args, **kwargs):
-    """
-    Wrapper for st.image that tolerates different Streamlit versions and
-    the presence of use_container_width/use_column_width kwargs.
-    If the underlying st.image doesn't accept a kwarg, falls back to width.
-    """
-    use_container = kwargs.pop("use_container_width", None)
-    use_column = kwargs.pop("use_column_width", None)
-    try:
-        sig = inspect.signature(st.image)
-    except Exception:
-        sig = None
-    kw = dict(kwargs)
-    accepts_container = False
-    accepts_column = False
-    if sig:
-        params = sig.parameters
-        accepts_container = "use_container_width" in params
-        accepts_column = "use_column_width" in params
-    if accepts_container and use_container is not None:
-        kw["use_container_width"] = use_container
-        return st.image(*args, **kw)
-    if accepts_column and use_column is not None:
-        kw["use_column_width"] = use_column
-        return st.image(*args, **kw)
-    if (use_container or use_column):
-        try:
-            return st.image(*args, width=700, **kw)
-        except Exception:
-            pass
-    return st.image(*args, **kw)
-
-# ---- Chroma admin helper (safe UI to inspect/reset .chroma) ----
-import shutil, time
-from pathlib import Path
-
-def _tail(path: str, n: int = 200) -> str:
-    p = Path(path)
-    if not p.exists():
-        return f"No file: {path}"
-    try:
-        with p.open("r", encoding="utf-8", errors="replace") as f:
-            lines = f.read().splitlines()
-            return "\n".join(lines[-n:])
-    except Exception as e:
-        return f"Error reading {path}: {e}"
-
-def show_chroma_admin_ui():
-    """
-    Add this to your sidebar (or admin page) to:
-      - view the tail of /tmp/chroma-init-error.log
-      - view .chroma top-level listing
-      - backup & reset .chroma via a button (best-effort)
-    """
-    try:
-        st.sidebar.markdown("### Chroma admin")
-        log_path = "/tmp/chroma-init-error.log"
-
-        st.sidebar.markdown("**Chroma init log (tail)**")
-        st.sidebar.code(_tail(log_path, 300), language="text")
-
-        st.sidebar.markdown("**.chroma directory (top-level)**")
-        chroma_dir = Path(".chroma")
-        if chroma_dir.exists():
-            # show up to 200 items to avoid long outputs
-            entries = []
-            for p in sorted(chroma_dir.glob("**/*")):
-                try:
-                    rel = p.relative_to(Path.cwd())
-                except Exception:
-                    rel = p
-                if p.is_file():
-                    entries.append(f"{rel}  {p.stat().st_size} bytes")
-                else:
-                    entries.append(f"{rel}/")
-            st.sidebar.text("\n".join(entries[:200]))
-        else:
-            st.sidebar.text(".chroma not found")
-
-        st.sidebar.markdown("---")
-        st.sidebar.markdown("**Reset .chroma (backup then delete)**")
-        if st.sidebar.button("Backup & Reset .chroma"):
-            try:
-                ts = int(time.time())
-                backup_path = f"/tmp/chroma_backup_{ts}"
-                if chroma_dir.exists():
-                    shutil.copytree(chroma_dir, backup_path)
-                shutil.rmtree(chroma_dir, ignore_errors=True)
-                st.sidebar.success(f"Backed up to {backup_path} and removed .chroma. App will reload.")
-                time.sleep(0.6)
-                st.experimental_rerun()
-            except Exception as ex:
-                st.sidebar.error(f"Reset failed: {ex}")
-    except Exception as outer_e:
-        # do not crash the app for admin UI errors
-        try:
-            st.sidebar.error(f"Chroma admin UI failed: {outer_e}")
-        except Exception:
-            pass
-
 TEXT_EXTS = {".txt", ".md", ".rtf", ".html", ".htm", ".json", ".xml"}
 DOC_EXTS  = {".pdf", ".docx", ".csv", ".tsv", ".xlsx", ".xlsm", ".xltx", ".pptx"}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
@@ -629,97 +524,10 @@ def split_text_recursive(text: str, cfg: ChunkingConfig) -> List[str]:
     return [c.strip() for c in final_chunks if c.strip()]
 
 # ----- Chroma -----
-
-
-def get_chroma_client(persist_dir: str) -> "chromadb.Client":
-    """
-    Robust Chroma client creation:
-      - uses duckdb+parquet local backend
-      - tries PersistentClient fallback if available
-      - logs full tracebacks to /tmp/chroma-init-error.log for debugging
-    WARNING: if you allow the function to delete persist_dir it will drop persisted embeddings.
-    """
-    import os, traceback, shutil, time
-    from typing import Optional
-
-    def _log_chroma_error(err: Exception, label: str = "chroma_init"):
-        log_path = "/tmp/chroma-init-error.log"
-        try:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(f"\n\n---- {label} at {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())} ----\n")
-                traceback.print_exc(file=f)
-                f.write("\n")
-        except Exception:
-            pass
-
-    try:
-        import chromadb
-        from chromadb.config import Settings
-    except Exception as imp_e:
-        raise RuntimeError(f"Failed importing chromadb or Settings: {imp_e}") from imp_e
-
+def get_chroma_client(persist_dir: str) -> chromadb.Client:
+    import os
     os.makedirs(persist_dir, exist_ok=True)
-    settings = Settings(
-        anonymized_telemetry=True,
-        chroma_db_impl="duckdb+parquet",
-        persist_directory=persist_dir,
-    )
-
-    # Attempt 1: normal Client with duckdb+parquet
-    try:
-        client = chromadb.Client(settings=settings)
-        return client
-    except Exception as e1:
-        _log_chroma_error(e1, label="client_initial_failure")
-
-    # Attempt safe backup and remove existing persistence directory
-    try:
-        # try to back up existing dir (best-effort)
-        try:
-            backup_dir = f"{persist_dir}_backup_{int(time.time())}"
-            if os.path.exists(persist_dir):
-                shutil.copytree(persist_dir, backup_dir)
-        except Exception:
-            pass
-
-        shutil.rmtree(persist_dir)
-    except Exception as rm_err:
-        _log_chroma_error(rm_err, label="cleanup_failure")
-        raise RuntimeError(f"Chroma init failed and cleanup failed: {e1}") from e1
-
-    # recreate dir and try again
-    os.makedirs(persist_dir, exist_ok=True)
-
-    try:
-        client = chromadb.Client(settings=settings)
-        return client
-    except Exception as e2:
-        _log_chroma_error(e2, label="client_after_reset_failure")
-
-    # Try PersistentClient fallback if available
-    try:
-        if hasattr(chromadb, "PersistentClient"):
-            try:
-                # different chromadb versions have different constructor signatures
-                try:
-                    client = chromadb.PersistentClient(persist_directory=persist_dir)
-                except TypeError:
-                    # alternate signature
-                    client = chromadb.PersistentClient(path=persist_dir)
-                return client
-            except Exception as e3:
-                _log_chroma_error(e3, label="persistent_client_failure")
-        else:
-            _log_chroma_error(RuntimeError("PersistentClient not present in chromadb"), label="persistent_client_missing")
-    except Exception as e:
-        _log_chroma_error(e, label="persistent_client_outer")
-
-    raise RuntimeError(
-        "Chroma init failed after reset. See /tmp/chroma-init-error.log for full traceback. "
-        "Common causes: corrupted .chroma folder, missing native deps (duckdb/hnswlib), or permission issues."
-    )
-
-
+    return chromadb.Client(Settings(anonymized_telemetry=False, persist_directory=persist_dir))
 
 def get_sentence_transformer_fn(model_name: str):
     return embedding_functions.SentenceTransformerEmbeddingFunction(model_name=model_name, device=None)
@@ -1006,36 +814,15 @@ def settings_defaults():
 # -------------------------------------------------------------------
 # Auto-index (renders status inline on RHS) — NO st.status (no white pill)
 # -------------------------------------------------------------------
-from typing import Optional
-
-def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optional["chromadb.Client"]:
-    """
-    Ensure the local Knowledge Base is indexed in Chroma when needed.
-    - Returns a chromadb client if available (and indexing attempted or skipped),
-      or None if Chroma is unavailable.
-    - Shows a Streamlit warning if Chroma initialization fails (so UI doesn't crash).
-    """
+def auto_index_if_needed(status_placeholder=None):
     folder = st.session_state["base_folder"]
     persist = st.session_state["persist_dir"]
     colname = st.session_state["collection_name"]
     emb_model = st.session_state["emb_model"]
     min_gap = int(st.session_state.get("auto_index_min_interval_sec", 8))
 
-    # Try to get Chroma client; if it fails, warn user and skip auto-indexing.
-    try:
-        client = get_chroma_client(persist)
-    except Exception as e:
-        try:
-            st.warning(
-                f"Chroma unavailable or failed to initialize: {e}. "
-                "RAG features will be disabled. Check logs (/tmp/chroma-init-error.log) for details."
-            )
-        except Exception:
-            # Best-effort: don't let UI warnings raise further errors.
-            pass
-        return None
+    client = get_chroma_client(persist)
 
-    # compute a signature for the KB (files + contents) to decide if re-index is needed
     sig_now, file_count = compute_kb_signature(folder)
     last_sig = st.session_state.get("_kb_last_sig")
     last_time = float(st.session_state.get("_kb_last_index_ts", 0.0))
@@ -1048,36 +835,25 @@ def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optiona
 
     if need_index and not throttled:
         try:
-            # show status and run the indexing routine (index_folder should be defined elsewhere)
-            target.markdown('<div class="status-inline">Indexing…</div>', unsafe_allow_html=True)
             n_docs, n_chunks = index_folder(
-                folder=folder,
-                client=client,
-                collection_name=colname,
-                embedding_model=emb_model,
-                chunk_cfg=st.session_state["chunk_cfg"],
+                folder=folder, client=client, collection_name=colname,
+                embedding_model=emb_model, chunk_cfg=st.session_state["chunk_cfg"],
             )
-
-            # update session state bookkeeping
             st.session_state["_kb_last_sig"] = sig_now
             st.session_state["_kb_last_index_ts"] = now
             st.session_state["_kb_last_counts"] = {"files": file_count, "docs": n_docs, "chunks": n_chunks}
             label = f"Indexed: <b>{n_docs}</b> files processed, <b>{n_chunks}</b> chunks"
         except Exception as e:
-            # keep the UI friendly — don't leak full tracebacks to users
             label = f"Auto-index failed: <b>{e}</b>"
-        # show final status (success or failure)
         target.markdown(f'<div class="status-inline">{label}</div>', unsafe_allow_html=True)
     else:
         ts = st.session_state.get("_kb_last_index_ts")
         when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else "—"
         target.markdown(
             f'<div class="status-inline">Auto-index is <b>ON</b> · Files: <b>{file_count}</b> · Last indexed: <b>{when}</b> · Collection: <code>{colname}</code></div>',
-            unsafe_allow_html=True,
+            unsafe_allow_html=True
         )
-
     return client
-
 
 # -------------------------------------------------------------------
 # Main
@@ -1097,31 +873,29 @@ def main():
     # Sidebar
     with st.sidebar:
         logo_path = _resolve_logo_path()
-        if logo_path:
-            try:
-                st_image_compat(
-                    str(logo_path),
-                    caption="iSOFT ANZ Pvt Ltd",
-                    use_column_width=True,
-                )
-            except Exception:
-                # Fallback to plain st.image if compatibility wrapper fails
-                try:
-                    st.image(str(logo_path), caption="iSOFT ANZ Pvt Ltd")
-                except Exception:
-                    pass
-
-        # Chroma admin helper (best-effort, don't let it crash the sidebar)
+if logo_path:
+    try:
+        st_image_compat(
+            str(logo_path),
+            caption="iSOFT ANZ Pvt Ltd",
+            use_column_width=True,
+        )
+    except Exception:
+        # Fallback to plain st.image if compatibility wrapper fails
         try:
-            show_chroma_admin_ui()
+            st.image(str(logo_path), caption="iSOFT ANZ Pvt Ltd")
         except Exception:
             pass
 
-        st.subheader("⚙️ Settings")
-        st.caption("Auto-index is enabled. Edit paths/models below if needed.")
+# Chroma admin helper (best-effort, don't let it crash the sidebar)
+try:
+    show_chroma_admin_ui()
+except Exception:
+    pass
 
-
-        st.session_state["base_folder"] = st.text_input("Knowledge Base", value=st.session_state.get("base_folder", get_kb_dir()))
+st.subheader("⚙️ Settings")
+st.caption("Auto-index is enabled. Edit paths/models below if needed.")
+st.session_state["base_folder"] = st.text_input("Knowledge Base", value=st.session_state.get("base_folder", get_kb_dir()))
         st.session_state["persist_dir"] = st.text_input("Chroma persist", value=st.session_state["persist_dir"])
         st.session_state["collection_name"] = st.text_input("Collection", value=st.session_state["collection_name"])
         st.session_state["emb_model"] = st.selectbox(
