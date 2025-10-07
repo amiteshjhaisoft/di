@@ -953,7 +953,7 @@ except Exception as e:
         st.warning(f"Chroma unavailable or failed to initialize: {e}. RAG features will be disabled. Check logs (/tmp/chroma-init-error.log) for details.")
     except Exception:
         pass
-    return None
+    # return None
 
 
     sig_now, file_count = compute_kb_signature(folder)
