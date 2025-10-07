@@ -638,28 +638,160 @@ def call_ollama_chat(model: str, prompt: str, temperature: float = 0.2, timeout:
     except Exception as e:
         return f"[Ollama error] {e}"
 
-def call_claude(model: str, prompt: str, temperature: float = 0.2, timeout: int = 120) -> str:
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        return "[Claude error] Missing ANTHROPIC_API_KEY environment variable."
+# def call_claude(model: str, prompt: str, temperature: float = 0.2, timeout: int = 120) -> str:
+#     api_key = os.getenv("ANTHROPIC_API_KEY", "")
+#     if not api_key:
+#         return "[Claude error] Missing ANTHROPIC_API_KEY environment variable."
+#     try:
+#         from anthropic import Anthropic
+#         client = Anthropic(api_key=api_key, timeout=timeout)
+#         msg = client.messages.create(
+#             model=model,
+#             max_tokens=800,
+#             temperature=temperature,
+#             system="You are a concise, citation-focused assistant.",
+#             messages=[{"role": "user", "content": prompt}],
+#         )
+#         parts: List[str] = []
+#         for block in msg.content:
+#             t = getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else None)
+#             if t: parts.append(t)
+#         return "\n".join(parts).strip()
+#     except Exception as e:
+#         return f"[Claude error] {e}"
+
+import os
+from typing import List, Optional
+
+def _get_streamlit_secret(name: str) -> Optional[str]:
+    """
+    Helper: return secret from streamlit.secrets if Streamlit is available,
+    otherwise return None.
+    """
     try:
+        import streamlit as _st
+        # streamlit.secrets behaves like a dict; use .get to avoid KeyError
+        return _st.secrets.get(name)
+    except Exception:
+        return None
+
+
+def _extract_text_from_msg(msg) -> str:
+    """
+    Try a few heuristics to extract readable text from an Anthropic response.
+    Handles object-like responses with .content, dict responses, lists of blocks,
+    and plain strings.
+    """
+    # 1) object with attribute .content
+    content = None
+    if hasattr(msg, "content"):
+        try:
+            content = msg.content
+        except Exception:
+            content = None
+
+    # 2) dict-like response
+    if content is None and isinstance(msg, dict):
+        # common keys: "completion", "output", "text", "content"
+        for k in ("completion", "output", "text", "content"):
+            if k in msg:
+                content = msg[k]
+                break
+
+    # 3) fallback to msg itself (string or iterable)
+    if content is None:
+        content = msg
+
+    # Now normalize content into a string
+    parts: List[str] = []
+
+    # If it's a plain string, just return it
+    if isinstance(content, str):
+        return content.strip()
+
+    # If it's an iterable (list/tuple), iterate blocks
+    if isinstance(content, (list, tuple)):
+        for block in content:
+            if isinstance(block, str):
+                text = block
+            elif isinstance(block, dict):
+                # try several keys commonly used for text
+                text = (
+                    block.get("text")
+                    or block.get("content")
+                    or block.get("output")
+                    or block.get("data")
+                    or None
+                )
+            else:
+                # object-like block
+                text = getattr(block, "text", None) or getattr(block, "content", None)
+            if text:
+                parts.append(str(text).strip())
+        return "\n".join(parts).strip()
+
+    # If it's a dict-like content now, try to pull a text field
+    if isinstance(content, dict):
+        for k in ("text", "content", "output", "completion", "data"):
+            if k in content:
+                val = content[k]
+                if isinstance(val, str):
+                    return val.strip()
+                if isinstance(val, (list, tuple)):
+                    return "\n".join(map(str, val)).strip()
+        # last resort: return stringified dict
+        return str(content).strip()
+
+    # Fallback: string-convert whatever it is
+    try:
+        return str(content).strip()
+    except Exception:
+        return ""
+
+
+def call_claude(
+    model: str,
+    prompt: str,
+    temperature: float = 0.2,
+    timeout: int = 120,
+    max_tokens: int = 800,
+) -> str:
+    """
+    Call Anthropic/Claude and return a text response. Looks for ANTHROPIC_API_KEY
+    in the environment or streamlit.secrets["ANTHROPIC_API_KEY"].
+
+    Returns a readable string on success, or an error message beginning with
+    "[Claude error]" on failure.
+    """
+    # 1) find the API key (env first, then Streamlit secrets)
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or _get_streamlit_secret("ANTHROPIC_API_KEY")
+    if not api_key:
+        return "[Claude error] Missing ANTHROPIC_API_KEY environment variable or streamlit secret."
+
+    try:
+        # Import lazily so the module isn't required unless this function runs
         from anthropic import Anthropic
+
+        # Construct client (some anthopic versions may accept timeout kw)
         client = Anthropic(api_key=api_key, timeout=timeout)
+
+        # Preferred call pattern (keeps your previous structure)
+        # If your anthopic SDK version uses a slightly different API, you can
+        # substitute the appropriate client method here.
         msg = client.messages.create(
             model=model,
-            max_tokens=800,
+            max_tokens=max_tokens,
             temperature=temperature,
             system="You are a concise, citation-focused assistant.",
             messages=[{"role": "user", "content": prompt}],
         )
-        parts: List[str] = []
-        for block in msg.content:
-            t = getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else None)
-            if t: parts.append(t)
-        return "\n".join(parts).strip()
-    except Exception as e:
-        return f"[Claude error] {e}"
 
+        # Normalise/parse response text robustly
+        return _extract_text_from_msg(msg) or "[Claude error] Empty response."
+
+    except Exception as e:
+        # Provide a short, non-sensitive message (avoid echoing secrets)
+        return f"[Claude error] {type(e).__name__}: {str(e)}"
 # -------------------------------------------------------------------
 # Settings defaults
 # -------------------------------------------------------------------
