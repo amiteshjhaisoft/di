@@ -29,3 +29,7 @@ pandas==2.2.2
 
 # --- QoL ---
 python-dotenv==1.0.1
+
+
+faiss-gpu
+
