@@ -100,6 +100,35 @@ class ClaudeDirect(BaseChatModel):
         ai = AIMessage(content=text)
         return ChatResult(generations=[ChatGeneration(message=ai)])
 
+from pathlib import Path
+from collections import Counter
+
+def build_citation_block(source_docs, kb_root: str | None = None) -> str:
+    names = []
+    for d in source_docs or []:
+        meta = getattr(d, "metadata", {}) or {}
+        src = meta.get("source", "unknown")
+
+        # Prefer path relative to KB; otherwise, just the filename
+        try:
+            if kb_root:
+                rel = Path(src).resolve().relative_to(Path(kb_root).resolve())
+                display = str(rel)
+            else:
+                display = Path(src).name
+        except Exception:
+            display = Path(src).name
+
+        names.append(display)
+
+    if not names:
+        return ""
+
+    counts = Counter(names)
+    lines = [f"- {name}" + (f" ×{n}" if n > 1 else "") for name, n in counts.items()]
+    return "\n\n**Sources**\n" + "\n".join(lines)
+
+
 # --------------------- UI / THEME ---------------------
 st.set_page_config(page_title="LLM Chat • LangChain RAG", page_icon="💬", layout="wide")
 
