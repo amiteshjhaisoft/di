@@ -310,7 +310,7 @@ def get_vectorstore(
 # LLM selection + ConversationalRetrievalChain
 # ======================================================================
 DEFAULT_OLLAMA = "llama3.2:1b-instruct-q4_K_M"
-DEFAULT_CLAUDE = "claude-4-5"
+DEFAULT_CLAUDE = "claude-sonnet-4-5"
 
 
 def _strip_proxy_env():
