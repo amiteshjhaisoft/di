@@ -686,9 +686,10 @@ def main():
             sources = result.get("source_documents", []) or []
 
             # Clean, de-duplicated, KB-relative source list
-            citation_block = build_citation_block(
-                sources, kb_root=st.session_state.get("base_folder")
-            )
+            citation_block = ""  # hide sources from chat
+            # citation_block = build_citation_block(
+            #     sources, kb_root=st.session_state.get("base_folder")
+            # )
 
             msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
         except Exception as e:
