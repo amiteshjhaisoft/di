@@ -80,29 +80,41 @@ def _img_to_data_uri(path: Optional[Path]) -> Optional[str]:
     mime = "image/png" if ext in ("png", "apng") else ("image/jpeg" if ext in ("jpg", "jpeg") else "image/svg+xml")
     return f"data:{mime};base64,{b64}"
 
-USER_AVATAR_PATH, ASSIST_AVATAR_PATH = _resolve_avatar_paths()
-USER_AVATAR_URI = _img_to_data_uri(USER_AVATAR_PATH)
-ASSIST_AVATAR_URI = _img_to_data_uri(ASSIST_AVATAR_PATH)
+# Build dynamic background-image declarations
+user_bg  = f"background-image:url('{USER_AVATAR_URI}');" if USER_AVATAR_URI else ""
+asst_bg  = f"background-image:url('{ASSIST_AVATAR_URI}');" if ASSIST_AVATAR_URI else ""
 
-st.markdown(f"""
+css = """
 <style>
-:root{{ --bg:#f7f8fb; --sidebar-bg:#f5f7fb; --panel:#fff; --text:#0b1220; --border:#e7eaf2; --bubble-user:#eef4ff; --bubble-assist:#f6f7fb; }}
+:root{{ 
+  --bg:#f7f8fb; --sidebar-bg:#f5f7fb; --panel:#fff; --text:#0b1220;
+  --muted:#5d6b82; --accent:#2563eb; --border:#e7eaf2;
+  --bubble-user:#eef4ff; --bubble-assist:#f6f7fb;
+}}
 html, body, [data-testid="stAppViewContainer"]{{ background:var(--bg); color:var(--text); }}
 section[data-testid="stSidebar"]{{ background:var(--sidebar-bg); border-right:1px solid var(--border); }}
 main .block-container{{ padding-top:.6rem; }}
+.container-narrow{{ max-width:1080px; margin:0 auto; }}
 .chat-card{{ background:var(--panel); border:1px solid var(--border); border-radius:14px; box-shadow:0 6px 16px rgba(16,24,40,.05); overflow:hidden; }}
-.chat-scroll{{ max-height:58vh; overflow:auto; padding:.65rem .9rem; }}
-.msg{{ display:flex; gap:.65rem; margin:.45rem 0; }}
-.avatar{{ width:32px; height:32px; border-radius:50%; border:1px solid var(--border); background-size:cover; background-position:center; flex:0 0 32px; }}
-.avatar.user {{ {"background-image:url('" + USER_AVATAR_URI + "');" if USER_AVATAR_URI else ""} }}
-.avatar.assistant {{ {"background-image:url('" + ASSIST_AVATAR_URI + "');" if ASSIST_AVATAR_URI else ""} }}
+.chat-scroll{{ max-height: 58vh; overflow:auto; padding:.65rem .9rem; }}
+.msg{{ display:flex; align-items:flex-start; gap:.65rem; margin:.45rem 0; }}
+.avatar{{ width:32px; height:32px; border-radius:50%; border:1px solid var(--border); background-size:cover; background-position:center; background-repeat:no-repeat; flex:0 0 32px; }}
+.avatar.user {{
+  {user_bg}
+}}
+.avatar.assistant {{
+  {asst_bg}
+}}
 .bubble{{ border:1px solid var(--border); background:var(--bubble-assist); padding:.8rem .95rem; border-radius:12px; max-width:860px; white-space:pre-wrap; line-height:1.45; }}
 .msg.user .bubble{{ background:var(--bubble-user); }}
 .composer{{ padding:.6rem .75rem; border-top:1px solid var(--border); background:#fff; position:sticky; bottom:0; z-index:2; }}
 .status-inline{{ width:100%; border:1px solid var(--border); background:#fafcff; border-radius:10px; padding:.5rem .7rem; font-size:.9rem; color:#111827; margin:.5rem 0 .8rem; }}
-.smallcaps{ font-variant: all-small-caps; color:#475569; }
+.smallcaps{{ font-variant: all-small-caps; color:#475569; }}
 </style>
-""", unsafe_allow_html=True)
+""".format(user_bg=user_bg, asst_bg=asst_bg)
+
+st.markdown(css, unsafe_allow_html=True)
+
 
 # --------------------- Helpers ---------------------
 TEXT_EXTS = {".txt", ".md", ".rtf", ".html", ".htm", ".json", ".xml"}
