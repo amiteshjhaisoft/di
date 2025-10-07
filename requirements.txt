@@ -17,3 +17,4 @@ langchain==0.2.17
 # ---- Vector store ----
 chromadb==0.5.3
 hnswlib==0.8.0
+sentence-transformers==3.1.1
