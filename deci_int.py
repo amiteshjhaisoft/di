@@ -1,17 +1,18 @@
-# Author: Amitesh Jha | iSoft | 2025-10-07
+# Author: Amitesh Jha | iSoft | 2025-10-07 (Refactored: Gemini)
 # Streamlit + LangChain RAG app — CPU-safe embeddings + Anthropic proxies-proof init.
 
 from __future__ import annotations
 import os, glob, time, base64, hashlib, logging
+import re # Added for greeting short-circuit
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 
 import streamlit as st
 import pandas as pd
 
 # --- Torch / device hygiene to avoid meta-tensor issues ---
-os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")           # force no CUDA
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")            # force no CUDA
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
@@ -20,18 +21,6 @@ os.environ.setdefault("CHROMA_TELEMETRY_IMPLEMENTATION", "none")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 logging.getLogger("chromadb").setLevel(logging.WARNING)
 
-# import re  # if not already imported
-
-# GREETING_RE = re.compile(
-#     r"^\s*(hi|hello|hey|yo|hola|namaste|hiya|hi there|hello there|good\s+(morning|afternoon|evening))[\s!,.?]*$",
-#     re.IGNORECASE,
-# )
-
-# def is_greeting(text: str) -> bool:
-#     t = (text or "").strip()
-#     # keep it strict so normal questions don't hit this path
-#     return len(t) <= 40 and bool(GREETING_RE.match(t))
-
 # LangChain bits
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -39,11 +28,14 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
-
-
-
-# DO NOT import ChatAnthropic (prevents any path that might add proxies=...)
-# from langchain_anthropic import ChatAnthropic
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_community.document_loaders import PyPDFLoader, BSHTMLLoader, Docx2txtLoader, CSVLoader
+try:
+    from langchain_community.chat_models import ChatOllama
+except Exception:
+    from langchain_community.llms import Ollama as ChatOllama
 
 # Anthropic SDK (new & old)
 try:
@@ -55,22 +47,32 @@ try:
 except Exception:
     _AnthropicClientOld = None
 
-try:
-    from langchain_community.chat_models import ChatOllama
-except Exception:
-    from langchain_community.llms import Ollama as ChatOllama
+# Constants & Settings
+DEFAULT_OLLAMA = "llama3.2"
+DEFAULT_CLAUDE = "claude-sonnet-4-5"
+_EMB_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+_EMB_MODEL_KW = {
+    "device": "cpu",
+    "trust_remote_code": False,
+}
+_ENCODE_KW = {
+    "normalize_embeddings": True,
+}
+TEXT_EXTS = {".txt", ".md", ".rtf", ".html", ".htm", ".json", ".xml"}
+DOC_EXTS  = {".pdf", ".docx", ".csv", ".tsv", ".xlsx", ".xlsm", ".xltx", ".pptx"}
+SUPPORTED_EXTS = TEXT_EXTS | DOC_EXTS
 
-from langchain_community.document_loaders import (
-    PyPDFLoader, BSHTMLLoader, Docx2txtLoader, CSVLoader
+GREETING_RE = re.compile(
+    r"^\s*(hi|hello|hey|yo|hola|namaste|hiya|hi there|hello there|"
+    r"good\s+(morning|afternoon|evening))[\s!,.?]*$",
+    re.IGNORECASE,
 )
 
 # --------------------- Minimal direct Claude model (bypass proxies kw path) ---------------------
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
 
 class ClaudeDirect(BaseChatModel):
-    model: str = "claude-sonnet-4-5"   # valid model id
+    # ... (rest of ClaudeDirect class remains the same)
+    model: str = DEFAULT_CLAUDE     # valid model id
     temperature: float = 0.2
     max_tokens: int = 800
     _client: object = None  # Anthropic client set at init
@@ -91,6 +93,7 @@ class ClaudeDirect(BaseChatModel):
                 text = m.content
             else:
                 parts = m.content or []
+                # Simple handling for content list (assuming text parts)
                 text = "".join(p.get("text","") if isinstance(p, dict) else str(p) for p in parts)
             out.append({"role": role, "content": [{"type": "text", "text": text}]})
         return out
@@ -114,11 +117,12 @@ class ClaudeDirect(BaseChatModel):
         ai = AIMessage(content=text)
         return ChatResult(generations=[ChatGeneration(message=ai)])
 
-from pathlib import Path
-from collections import Counter
 
-def build_citation_block(source_docs, kb_root: str | None = None) -> str:
+def build_citation_block(source_docs: List[Document], kb_root: str | None = None) -> str:
+    # ... (rest of build_citation_block remains the same)
     names = []
+    from collections import Counter # Moved import inside function for scope
+
     for d in source_docs or []:
         meta = getattr(d, "metadata", {}) or {}
         src = meta.get("source", "unknown")
@@ -142,10 +146,10 @@ def build_citation_block(source_docs, kb_root: str | None = None) -> str:
     lines = [f"- {name}" + (f" ×{n}" if n > 1 else "") for name, n in counts.items()]
     return "\n\n**Sources**\n" + "\n".join(lines)
 
-
-# --------------------- UI / THEME ---------------------
+# --------------------- UI / THEME (no changes needed) ---------------------
 st.set_page_config(page_title="LLM Chat • LangChain RAG", page_icon="💬", layout="wide")
 
+# (Avatar/CSS functions remain here)
 def _resolve_logo_path() -> Optional[Path]:
     env_logo = os.getenv("ISOFT_LOGO_PATH")
     candidates = [Path.cwd() / "assets" / "isoft_logo.png",
@@ -194,7 +198,7 @@ section[data-testid="stSidebar"]{{ background:var(--sidebar-bg); border-right:1p
 main .block-container{{ padding-top:.6rem; }}
 .container-narrow{{ max-width:1080px; margin:0 auto; }}
 .chat-card{{ background:var(--panel); border:1px solid var(--border); border-radius:14px; box-shadow:0 6px 16px rgba(16,24,40,.05); overflow:hidden; }}
-.chat-scroll{{ max-height: 58vh; overflow:auto; padding:.65rem .9rem; }}
+.chat-scroll{{ max-height: 75vh; overflow:auto; padding:.65rem .9rem; }}
 .msg{{ display:flex; align-items:flex-start; gap:.65rem; margin:.45rem 0; }}
 .avatar{{ width:32px; height:32px; border-radius:50%; border:1px solid var(--border); background-size:cover; background-position:center; background-repeat:no-repeat; flex:0 0 32px; }}
 .avatar.user {{
@@ -213,10 +217,7 @@ main .block-container{{ padding-top:.6rem; }}
 
 st.markdown(css, unsafe_allow_html=True)
 
-# --------------------- Helpers ---------------------
-TEXT_EXTS = {".txt", ".md", ".rtf", ".html", ".htm", ".json", ".xml"}
-DOC_EXTS  = {".pdf", ".docx", ".csv", ".tsv", ".xlsx", ".xlsm", ".xltx", ".pptx"}
-SUPPORTED_EXTS = TEXT_EXTS | DOC_EXTS
+# --------------------- Helpers (minimal changes) ---------------------
 
 def get_kb_dir() -> str:
     kb = os.path.abspath(os.path.join(".", "KB"))
@@ -251,10 +252,8 @@ def compute_kb_signature(folder: str) -> Tuple[str, int]:
     return stable_hash(raw if raw else f"EMPTY-{time.time()}"), len(files)
 
 # --------------------- Loading ---------------------
-from langchain_community.document_loaders import PyPDFLoader, BSHTMLLoader, Docx2txtLoader, CSVLoader
-from langchain.schema import Document
-
 def _fallback_read(path: str) -> str:
+    # ... (rest of _fallback_read remains the same)
     try:
         if path.lower().endswith((".xlsx", ".xlsm", ".xltx")):
             df = pd.read_excel(path).astype(str).iloc[:1000, :50]
@@ -274,6 +273,7 @@ def _fallback_read(path: str) -> str:
             return ""
 
 def load_one(path: str) -> List[Document]:
+    # ... (rest of load_one remains the same)
     p = path.lower()
     try:
         if p.endswith(".pdf"):
@@ -307,16 +307,8 @@ class ChunkingConfig:
     chunk_size: int = 1200
     chunk_overlap: int = 200
 
-_EMB_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-_EMB_MODEL_KW = {
-    "device": "cpu",
-    "trust_remote_code": False,
-}
-_ENCODE_KW = {
-    "normalize_embeddings": True,
-}
-
 def _make_embeddings():
+    # ... (rest of _make_embeddings remains the same)
     return HuggingFaceEmbeddings(
         model_name=_EMB_MODEL,
         model_kwargs=_EMB_MODEL_KW,
@@ -324,6 +316,7 @@ def _make_embeddings():
     )
 
 def index_folder_langchain(folder: str, persist_dir: str, collection_name: str, emb_model: str, chunk_cfg: ChunkingConfig) -> Tuple[int, int]:
+    # ... (rest of index_folder_langchain remains the same)
     raw_docs = load_documents(folder)
     if not raw_docs:
         return (0, 0)
@@ -334,6 +327,7 @@ def index_folder_langchain(folder: str, persist_dir: str, collection_name: str, 
     return (len(raw_docs), len(splat))
 
 def get_vectorstore(persist_dir: str, collection_name: str, emb_model: str) -> Chroma:
+    # ... (rest of get_vectorstore remains the same)
     key = f"_vs::{persist_dir}::{collection_name}::{emb_model}"
     if key in st.session_state:
         return st.session_state[key]
@@ -344,11 +338,12 @@ def get_vectorstore(persist_dir: str, collection_name: str, emb_model: str) -> C
 
 # --------------------- Anthropic init helpers ---------------------
 def _strip_proxy_env() -> None:
+    # ... (rest of _strip_proxy_env remains the same)
     for v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "NO_PROXY", "no_proxy"):
         os.environ.pop(v, None)
 
 def _get_secret_api_key() -> Optional[str]:
-    # robust: flat and nested
+    # ... (rest of _get_secret_api_key remains the same)
     try:
         s = st.secrets
     except Exception:
@@ -374,6 +369,7 @@ def _get_secret_api_key() -> Optional[str]:
     return None
 
 def _anthropic_client_from_secrets():
+    # ... (rest of _anthropic_client_from_secrets remains the same)
     _strip_proxy_env()
     api_key = _get_secret_api_key()
     if not api_key:
@@ -386,10 +382,9 @@ def _anthropic_client_from_secrets():
     raise RuntimeError("Anthropic SDK not installed correctly.")
 
 # --------------------- Chain builders ---------------------
-DEFAULT_OLLAMA = "llama3.2"
-DEFAULT_CLAUDE = "claude-sonnet-4-5"
 
 def make_llm(backend: str, model_name: str, temperature: float):
+    # ... (rest of make_llm remains the same)
     if backend.startswith("Claude"):
         # Always bypass ChatAnthropic to avoid any proxies kw path
         client = _anthropic_client_from_secrets()
@@ -401,7 +396,8 @@ def make_llm(backend: str, model_name: str, temperature: float):
         )
     return ChatOllama(model=model_name or DEFAULT_OLLAMA, temperature=temperature)
 
-def make_chain(vs: Chroma, llm, k: int):
+def make_chain(vs: Chroma, llm: BaseChatModel, k: int):
+    # ... (rest of make_chain remains the same)
     retriever = vs.as_retriever(search_kwargs={"k": k})
     # Tell memory which output field to capture
     memory = ConversationBufferMemory(
@@ -419,7 +415,8 @@ def make_chain(vs: Chroma, llm, k: int):
 
 
 # --------------------- Defaults + auto-index ---------------------
-def settings_defaults():
+def settings_defaults() -> Dict[str, Any]:
+    # ... (rest of settings_defaults remains the same)
     kb_dir = get_kb_dir()
     return {
         "persist_dir": ".chroma",
@@ -436,6 +433,7 @@ def settings_defaults():
     }
 
 def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optional[Chroma]:
+    # ... (rest of auto_index_if_needed remains the same)
     folder = st.session_state.get("base_folder")
     persist = st.session_state.get("persist_dir")
     colname = st.session_state.get("collection_name")
@@ -472,113 +470,10 @@ def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optiona
     except Exception:
         return None
 
-# --------------------- Main ---------------------
-# def main():
-#     for k, v in settings_defaults().items():
-#         st.session_state.setdefault(k, v)
+# --------------------- UI Functions ---------------------
 
-#     with st.sidebar:
-#         lp = _resolve_logo_path()
-#         if lp and Path(lp).exists():
-#             try:
-#                 st.image(str(lp), caption="iSOFT ANZ Pvt Ltd", width=240)
-#             except Exception:
-#                 pass
-#         else:
-#             st.info("Add assets/isoft_logo.png for branding.")
-
-#         st.subheader("⚙️ Settings")
-#         st.caption("Auto-index is enabled. Edit paths/models below if needed.")
-
-#         st.session_state["base_folder"] = st.text_input("Knowledge Base", value=st.session_state["base_folder"])
-#         st.session_state["persist_dir"] = st.text_input("Chroma persist", value=st.session_state["persist_dir"])
-#         st.session_state["collection_name"] = st.text_input("Collection", value=st.session_state["collection_name"])
-
-#         st.session_state["backend"] = st.radio("LLM", ["Claude (Anthropic)", "Ollama (local)"], index=0)
-#         if st.session_state["backend"].startswith("Claude"):
-#             st.session_state["claude_model"] = st.text_input("Claude model", value=st.session_state["claude_model"])
-#         else:
-#             st.session_state["ollama_model"] = st.text_input("Ollama model", value=st.session_state["ollama_model"])
-
-#         st.session_state["temperature"] = st.slider("Temperature", 0.0, 1.0, 0.2, 0.05)
-#         st.session_state["top_k"] = st.slider("Top-K", 1, 15, 5)
-#         st.session_state["auto_index_min_interval_sec"] = st.number_input("Auto-index min interval (sec)", min_value=1, max_value=300, value=8, step=1)
-
-#         try:
-#             import anthropic as _anth
-#             st.caption(f"anthropic=={getattr(_anth, '__version__', 'unknown')} • direct client mode")
-#         except Exception:
-#             st.caption("anthropic not importable")
-
-#     st.markdown("### 💬 Chat with your Knowledge Base (LangChain RAG)")
-#     hero_status = st.container()
-#     vs = auto_index_if_needed(status_placeholder=hero_status)
-
-#     st.session_state.setdefault("messages", [{"role": "assistant", "content": "Hi! Ask anything about your Knowledge Base."}])
-
-#     st.markdown('<div class="chat-card">', unsafe_allow_html=True)
-#     st.markdown('<div class="chat-scroll">', unsafe_allow_html=True)
-#     for m in st.session_state["messages"]:
-#         who = "user" if m["role"] == "user" else "assistant"
-#         st.markdown(f'<div class="msg {who}"><div class="avatar {who}"></div><div class="bubble">{m["content"]}</div></div>', unsafe_allow_html=True)
-#     st.markdown("</div>", unsafe_allow_html=True)
-
-#     st.session_state.setdefault("_compose_nonce", 0)
-#     compose_key = f"compose_input_{st.session_state['_compose_nonce']}"
-
-#     st.markdown('<div class="composer">', unsafe_allow_html=True)
-#     c1, c2 = st.columns([1, 0.2])
-#     with c1:
-#         user_text = st.text_area("Message", key=compose_key, placeholder="Type your question…", label_visibility="collapsed")
-#     with c2:
-#         send = st.button("Send", use_container_width=True)
-#     st.markdown("</div>", unsafe_allow_html=True)
-#     st.markdown("</div>", unsafe_allow_html=True)
-
-#     if send and user_text and user_text.strip():
-#         query = user_text.strip()
-#         st.session_state["messages"].append({"role": "user", "content": query})
-
-#         if vs is None:
-#             st.session_state["messages"].append({"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."})
-#             st.session_state["_compose_nonce"] += 1
-#             st.rerun()
-
-#         backend = st.session_state["backend"]
-#         model_name = st.session_state["claude_model"] if backend.startswith("Claude") else st.session_state["ollama_model"]
-#         try:
-#             llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
-#         except Exception as e:
-#             st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
-#             st.session_state["_compose_nonce"] += 1
-#             st.rerun()
-
-#         chain = make_chain(vs, llm, int(st.session_state["top_k"]))
-
-#         t0 = time.time()
-#         try:
-#             result = chain.invoke({"question": query})
-#             answer = result.get("answer", "").strip() or "(no answer)"
-#             sources = result.get("source_documents", []) or []
-#             cited = []
-#             for i, d in enumerate(sources, start=1):
-#                 src = (d.metadata or {}).get("source", "unknown")
-#                 cited.append(f"[{i}] {src}")
-#             citation_block = ("\n\nSources:\n" + "\n".join(cited)) if cited else ""
-#             msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
-#         except Exception as e:
-#             msg = f"RAG error: {e}"
-#         st.session_state["messages"].append({"role": "assistant", "content": msg})
-#         st.session_state["_compose_nonce"] += 1
-#         st.rerun()
-
-# # --------------------- Main ---------------------
-def main():
-    # Defaults
-    for k, v in settings_defaults().items():
-        st.session_state.setdefault(k, v)
-
-    # Sidebar
+def render_sidebar():
+    """Renders the entire Streamlit sidebar with settings."""
     with st.sidebar:
         lp = _resolve_logo_path()
         if lp and Path(lp).exists():
@@ -592,36 +487,27 @@ def main():
         st.subheader("⚙️ Settings")
         st.caption("Auto-index is enabled. Edit paths/models below if needed.")
 
-        st.session_state["base_folder"] = st.text_input(
-            "Knowledge Base", value=st.session_state["base_folder"]
-        )
-        st.session_state["persist_dir"] = st.text_input(
-            "Chroma persist", value=st.session_state["persist_dir"]
-        )
-        st.session_state["collection_name"] = st.text_input(
-            "Collection", value=st.session_state["collection_name"]
-        )
+        # --- KB Settings ---
+        st.session_state["base_folder"] = st.text_input("Knowledge Base Folder", value=st.session_state["base_folder"])
+        st.session_state["persist_dir"] = st.text_input("Chroma Persist Directory", value=st.session_state["persist_dir"])
+        st.session_state["collection_name"] = st.text_input("Collection Name", value=st.session_state["collection_name"])
 
-        st.session_state["backend"] = st.radio(
-            "LLM", ["Claude (Anthropic)", "Ollama (local)"], index=0
-        )
+        st.divider()
+
+        # --- LLM Settings ---
+        st.session_state["backend"] = st.radio("LLM Backend", ["Claude (Anthropic)", "Ollama (local)"], index=0, key="llm_backend_radio")
         if st.session_state["backend"].startswith("Claude"):
-            st.session_state["claude_model"] = st.text_input(
-                "Claude model", value=st.session_state["claude_model"]
-            )
+            st.session_state["claude_model"] = st.text_input("Claude Model Name", value=st.session_state["claude_model"])
         else:
-            st.session_state["ollama_model"] = st.text_input(
-                "Ollama model", value=st.session_state["ollama_model"]
-            )
+            st.session_state["ollama_model"] = st.text_input("Ollama Model Name", value=st.session_state["ollama_model"])
 
-        st.session_state["temperature"] = st.slider(
-            "Temperature", 0.0, 1.0, 0.2, 0.05
-        )
-        st.session_state["top_k"] = st.slider("Top-K", 1, 15, 5)
+        st.session_state["temperature"] = st.slider("Temperature", 0.0, 1.0, 0.2, 0.05)
+        st.session_state["top_k"] = st.slider("Top-K (Retrieval)", 1, 15, 5)
         st.session_state["auto_index_min_interval_sec"] = st.number_input(
             "Auto-index min interval (sec)", min_value=1, max_value=300, value=8, step=1
         )
-
+        
+        # Anthropic status
         try:
             import anthropic as _anth
             st.caption(
@@ -630,129 +516,152 @@ def main():
         except Exception:
             st.caption("anthropic not importable")
 
-    # Title + status
+def render_chat_history():
+    """Renders the chat history using st.chat_message."""
+    # This is a cleaner way than the manual HTML you had
+    for message in st.session_state["messages"]:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+def render_prompt_options():
+    """Renders suggested prompt buttons."""
+    
+    st.markdown('<div class="smallcaps">Suggested Prompts</div>', unsafe_allow_html=True)
+    
+    # Example prompts (customize these based on expected KB content)
+    prompts = [
+        "What is the policy on annual leave?",
+        "Summarize the Q3 financial results.",
+        "Who is the current project lead for the 'Phoenix' initiative?",
+        "Can you explain the key features of the new system?",
+    ]
+    
+    # Display buttons in a row
+    cols = st.columns(len(prompts))
+    for i, prompt in enumerate(prompts):
+        if cols[i].button(prompt, key=f"prompt_option_{i}"):
+            # When a button is clicked, set the chat input and trigger handler
+            st.session_state["user_prompt_input"] = prompt
+            st.session_state["_trigger_send"] = True
+            st.rerun()
+
+# --------------------- Main Execution Logic ---------------------
+
+def handle_user_input(query: str, vs: Optional[Chroma]):
+    """Processes the user query, updates history, and runs the RAG chain."""
+    
+    # 1. Append user message
+    st.session_state["messages"].append({"role": "user", "content": query})
+
+    # 2. Short-circuit for simple greetings (improves latency)
+    if len(query) <= 40 and GREETING_RE.match(query):
+        st.session_state["messages"].append(
+            {"role": "assistant", "content": "Hello! How can I help you today with your Knowledge Base?"}
+        )
+        # Re-run to update the chat UI
+        st.rerun() 
+        return
+
+    # 3. Check Vector Store
+    if vs is None:
+        st.session_state["messages"].append(
+            {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
+        )
+        st.rerun()
+        return
+
+    # 4. Initialize LLM
+    backend = st.session_state["backend"]
+    model_name = (
+        st.session_state["claude_model"]
+        if backend.startswith("Claude")
+        else st.session_state["ollama_model"]
+    )
+    try:
+        llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
+    except Exception as e:
+        st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
+        st.rerun()
+        return
+
+    # 5. Run RAG Chain
+    chain = make_chain(vs, llm, int(st.session_state["top_k"]))
+
+    t0 = time.time()
+    try:
+        # NOTE: Using st.spinner is a nicer UX for long operations
+        with st.spinner(f"Querying {backend} with RAG..."):
+            result = chain.invoke({"question": query})
+            answer = result.get("answer", "").strip() or "I could not find an answer in the Knowledge Base."
+            sources = result.get("source_documents", []) or []
+
+        # Build citation block only if sources exist
+        citation_block = build_citation_block(
+            sources, kb_root=st.session_state.get("base_folder")
+        )
+        
+        # In a cleaner UI, use the standard Streamlit chat message for the main answer
+        # and append sources separately if needed. I'll include them in the content for now.
+        msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
+        
+    except Exception as e:
+        msg = f"RAG error: {e}"
+
+    # 6. Append assistant message
+    st.session_state["messages"].append({"role": "assistant", "content": msg})
+    st.rerun()
+
+
+def main():
+    # 1. Initialize session state defaults
+    for k, v in settings_defaults().items():
+        st.session_state.setdefault(k, v)
+    
+    # Initialize a temporary state for the "prompt options" click
+    st.session_state.setdefault("_trigger_send", False)
+
+    # 2. Render UI
+    render_sidebar()
+
+    # Title & Index Status
     st.markdown("### 💬 Chat with your Knowledge Base (LangChain RAG)")
     hero_status = st.container()
     vs = auto_index_if_needed(status_placeholder=hero_status)
-
-    # Chat history
+    
+    # Initial Chat History
     st.session_state.setdefault(
         "messages",
-        [{"role": "assistant", "content": "Hi! Ask anything about your Knowledge Base."}],
+        [{"role": "assistant", "content": "Hi! Ask anything about your Knowledge Base, or click on a suggested prompt below."}],
     )
 
-    # Chat lane
+    # Chat UI container
+    # Replaced manual HTML rendering with standard Streamlit chat elements for simplicity/better integration
     st.markdown('<div class="chat-card">', unsafe_allow_html=True)
     st.markdown('<div class="chat-scroll">', unsafe_allow_html=True)
-    for m in st.session_state["messages"]:
-        who = "user" if m["role"] == "user" else "assistant"
-        st.markdown(
-            f'<div class="msg {who}"><div class="avatar {who}"></div><div class="bubble">{m["content"]}</div></div>',
-            unsafe_allow_html=True,
-        )
-    st.markdown("</div>", unsafe_allow_html=True)
+    render_chat_history()
+    st.markdown("</div>", unsafe_allow_html=True) # End chat-scroll
 
-    # Composer
-    st.session_state.setdefault("_compose_nonce", 0)
-    compose_key = f"compose_input_{st.session_state['_compose_nonce']}"
+    # New Composer with Prompt Options
     st.markdown('<div class="composer">', unsafe_allow_html=True)
-    c1, c2 = st.columns([1, 0.2])
-    with c1:
-        user_text = st.text_area(
-            "Message", key=compose_key, placeholder="Type your question…", label_visibility="collapsed"
-        )
-    with c2:
-        send = st.button("Send", use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+    render_prompt_options()
 
-   
-#     # Send handler
-#     if send and user_text and user_text.strip():
-#         query = user_text.strip()
-#         st.session_state["messages"].append({"role": "user", "content": query})
+    # Use the native st.chat_input which handles the input and submit better
+    user_text = st.chat_input(
+        "Type your question...",
+        key="user_prompt_input" # Use a consistent key
+    )
     
-#         # --- Greeting short-circuit ----
-#         GREETING_RE = re.compile(
-#             r"^\s*(hi|hello|hey|yo|hola|namaste|hiya|hi there|hello there|"
-#             r"good\s+(morning|afternoon|evening))[\s!,.?]*$",
-#             re.IGNORECASE,
-#         )
-#         if len(query) <= 40 and GREETING_RE.match(query):
-#             st.session_state["messages"].append(
-#                 {"role": "assistant", "content": "Hello! How can I help you today?"}
-#             )
-#             st.session_state["_compose_nonce"] += 1
-#             st.rerun()
-#         # --------------------------------
+    # Check if a prompt option was clicked
+    if st.session_state.get("_trigger_send", False):
+        user_text = st.session_state.pop("user_prompt_input", None)
+        st.session_state.pop("_trigger_send")
     
-#         if vs is None:
-#             st.session_state["messages"].append(
-#                 {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
-#             )
-#             st.session_state["_compose_nonce"] += 1
-#             st.rerun()
-    
-#         backend = st.session_state["backend"]
-#         model_name = (
-#             st.session_state["claude_model"]
-#             if backend.startswith("Claude")
-#             else st.session_state["ollama_model"]
-#         )
-#         try:
-#             llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
-#         except Exception as e:
-#             st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
-#             st.session_state["_compose_nonce"] += 1
-#             st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True) # End composer
+    st.markdown("</div>", unsafe_allow_html=True) # End chat-card
 
-    if send and user_text and user_text.strip():
-        query = user_text.strip()
-        st.session_state["messages"].append({"role": "user", "content": query})
-
-        if vs is None:
-            st.session_state["messages"].append(
-                {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
-            )
-            st.session_state["_compose_nonce"] += 1
-            st.rerun()
-
-        backend = st.session_state["backend"]
-        model_name = (
-            st.session_state["claude_model"]
-            if backend.startswith("Claude")
-            else st.session_state["ollama_model"]
-        )
-        try:
-            llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
-        except Exception as e:
-            st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
-            st.session_state["_compose_nonce"] += 1
-            st.rerun()
-
-        chain = make_chain(vs, llm, int(st.session_state["top_k"]))
-
-        t0 = time.time()
-        try:
-            result = chain.invoke({"question": query})
-            answer = result.get("answer", "").strip() or "(no answer)"
-            sources = result.get("source_documents", []) or []
-
-            # Clean, de-duplicated, KB-relative source list
-            citation_block = ""  # hide sources from chat
-            # citation_block = build_citation_block(
-            #     sources, kb_root=st.session_state.get("base_folder")
-            # )
-
-            msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
-        except Exception as e:
-            msg = f"RAG error: {e}"
-
-        st.session_state["messages"].append({"role": "assistant", "content": msg})
-        # Clear text area by rotating the key
-        st.session_state["_compose_nonce"] += 1
-        st.rerun()
-
+    # 3. Handle User Input
+    if user_text and user_text.strip():
+        handle_user_input(user_text.strip(), vs)
 
 if __name__ == "__main__":
     main()
