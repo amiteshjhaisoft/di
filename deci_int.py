@@ -141,7 +141,7 @@ def build_citation_block(source_docs: List[Document], kb_root: str | None = None
     lines = [f"- {name}" + (f" ×{n}" if n > 1 else "") for name, n in counts.items()]
     return "\n\n**Sources**\n" + "\n".join(lines)
 
-# --------------------- UI / THEME (no changes needed) ---------------------
+# --------------------- UI / THEME ---------------------
 st.set_page_config(page_title="LLM Chat • LangChain RAG", page_icon="💬", layout="wide")
 
 def _resolve_logo_path() -> Optional[Path]:
@@ -203,4 +203,407 @@ main .block-container{{ padding-top:.6rem; }}
 .bubble{{ border:1px solid var(--border); background:var(--bubble-assist); padding:.8rem .95rem; border-radius:12px; max-width:860px; white-space:pre-wrap; line-height:1.45; }}
 .msg.user .bubble{{ background:var(--bubble-user); }}
 .composer{{ padding:.6rem .75rem; border-top:1px solid var(--border); background:#fff; position:sticky; bottom:0; z-index:2; }}
-.status-inline{{ width:100%; border:1px solid var(--border); background:#fafcff; border-radius:10px; padding:.5rem .
+.status-inline{{ width:100%; border:1px solid var(--border); background:#fafcff; border-radius:10px; padding:.5rem .7rem; font-size:.9rem; color:#111827; margin:.5rem 0 .8rem; }}
+.smallcaps{{ font-variant: all-small-caps; color:#475569; }}
+</style>
+""".format(user_bg=user_bg, asst_bg=asst_bg)
+
+st.markdown(css, unsafe_allow_html=True)
+
+# --------------------- Helpers (minimal changes) ---------------------
+
+def get_kb_dir() -> str:
+    kb = os.path.abspath(os.path.join(".", "KB"))
+    os.makedirs(kb, exist_ok=True)
+    return kb
+
+def human_time(ms: float) -> str:
+    return f"{ms:.0f} ms" if ms < 1000 else f"{ms/1000:.2f} s"
+
+def stable_hash(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:12]
+
+def iter_files(folder: str) -> List[str]:
+    paths: List[str] = []
+    for ext in SUPPORTED_EXTS:
+        paths.extend(glob.glob(os.path.join(folder, f"**/*{ext}"), recursive=True))
+    return sorted(list(set(paths)))
+
+def compute_kb_signature(folder: str) -> Tuple[str, int]:
+    files = iter_files(folder)
+    lines = []
+    base = os.path.abspath(folder)
+    for p in files:
+        try:
+            stt = os.stat(p)
+            rel = os.path.relpath(os.path.abspath(p), base)
+            lines.append(f"{rel}|{stt.st_size}|{int(stt.st_mtime)}")
+        except Exception:
+            continue
+    lines.sort()
+    raw = "\n".join(lines)
+    return stable_hash(raw if raw else f"EMPTY-{time.time()}"), len(files)
+
+# --------------------- Loading ---------------------
+def _fallback_read(path: str) -> str:
+    try:
+        if path.lower().endswith((".xlsx", ".xlsm", ".xltx")):
+            df = pd.read_excel(path).astype(str).iloc[:1000, :50]
+            header = " | ".join(df.columns.tolist())
+            body = "\n".join(" | ".join(row) for row in df.values.tolist())
+            return f"{header}\n{body}"
+        if path.lower().endswith((".csv", ".tsv")):
+            df = pd.read_csv(path, sep="\t" if path.lower().endswith(".tsv") else ",").astype(str).iloc[:1000, :50]
+            header = " | ".join(df.columns.tolist())
+            body = "\n".join(" | ".join(row) for row in df.values.tolist())
+            return f"{header}\n{body}"
+        return Path(path).read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        try:
+            return Path(path).read_bytes().decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
+
+def load_one(path: str) -> List[Document]:
+    p = path.lower()
+    try:
+        if p.endswith(".pdf"):
+            return PyPDFLoader(path).load()
+        if p.endswith((".html", ".htm")):
+            return BSHTMLLoader(path).load()
+        if p.endswith(".docx"):
+            return Docx2txtLoader(path).load()
+        if p.endswith(".csv"):
+            return CSVLoader(path).load()
+        if p.endswith(".tsv"):
+            return CSVLoader(path, csv_args={"delimiter": "\t"}).load()
+        if p.endswith((".txt", ".md", ".json", ".xml", ".rtf", ".pptx", ".xlsx", ".xlsm", ".xltx")):
+            txt = _fallback_read(path)
+            return [Document(page_content=txt, metadata={"source": path})] if txt.strip() else []
+        txt = _fallback_read(path)
+        return [Document(page_content=txt, metadata={"source": path})] if txt.strip() else []
+    except Exception:
+        txt = _fallback_read(path)
+        return [Document(page_content=txt, metadata={"source": path})] if txt.strip() else []
+
+def load_documents(folder: str) -> List[Document]:
+    docs: List[Document] = []
+    for path in iter_files(folder):
+        docs.extend(load_one(path))
+    return docs
+
+# --------------------- Indexing ---------------------
+@dataclass
+class ChunkingConfig:
+    chunk_size: int = 1200
+    chunk_overlap: int = 200
+
+def _make_embeddings():
+    return HuggingFaceEmbeddings(
+        model_name=_EMB_MODEL,
+        model_kwargs=_EMB_MODEL_KW,
+        encode_kwargs=_ENCODE_KW,
+    )
+
+def index_folder_langchain(folder: str, persist_dir: str, collection_name: str, emb_model: str, chunk_cfg: ChunkingConfig) -> Tuple[int, int]:
+    raw_docs = load_documents(folder)
+    if not raw_docs:
+        return (0, 0)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_cfg.chunk_size, chunk_overlap=chunk_cfg.chunk_overlap, separators=["\n\n", "\n", ". ", " "])
+    splat = splitter.split_documents(raw_docs)
+    embeddings = _make_embeddings()
+    _ = Chroma.from_documents(documents=splat, embedding=embeddings, collection_name=collection_name, persist_directory=persist_dir).persist()
+    return (len(raw_docs), len(splat))
+
+def get_vectorstore(persist_dir: str, collection_name: str, emb_model: str) -> Chroma:
+    key = f"_vs::{persist_dir}::{collection_name}::{emb_model}"
+    if key in st.session_state:
+        return st.session_state[key]
+    embeddings = _make_embeddings()
+    vs = Chroma(collection_name=collection_name, persist_directory=persist_dir, embedding_function=embeddings)
+    st.session_state[key] = vs
+    return vs
+
+# --------------------- Anthropic init helpers ---------------------
+def _strip_proxy_env() -> None:
+    for v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "NO_PROXY", "no_proxy"):
+        os.environ.pop(v, None)
+
+def _get_secret_api_key() -> Optional[str]:
+    try:
+        s = st.secrets
+    except Exception:
+        s = None
+
+    if s:
+        for k in ("ANTHROPIC_API_KEY","anthropic_api_key","CLAUDE_API_KEY","claude_api_key"):
+            v = s.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        for parent in ("anthropic","claude","secrets"):
+            if parent in s and isinstance(s[parent], dict):
+                ns = s[parent]
+                for k in ("api_key","ANTHROPIC_API_KEY","key","token"):
+                    v = ns.get(k)
+                    if isinstance(v, str) and v.strip():
+                        return v.strip()
+
+    for k in ("ANTHROPIC_API_KEY","anthropic_api_key","CLAUDE_API_KEY","claude_api_key"):
+        v = os.getenv(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+def _anthropic_client_from_secrets():
+    _strip_proxy_env()
+    api_key = _get_secret_api_key()
+    if not api_key:
+        raise RuntimeError("Missing ANTHROPIC_API_KEY (set in Streamlit secrets or env).")
+    os.environ["ANTHROPIC_API_KEY"] = api_key
+    if _AnthropicClientNew is not None:
+        return _AnthropicClientNew(api_key=api_key)
+    if _AnthropicClientOld is not None:
+        return _AnthropicClientOld(api_key=api_key)
+    raise RuntimeError("Anthropic SDK not installed correctly.")
+
+# --------------------- Chain builders ---------------------
+
+def make_llm(backend: str, model_name: str, temperature: float):
+    if backend.startswith("Claude"):
+        client = _anthropic_client_from_secrets()
+        return ClaudeDirect(
+            client=client,
+            model=model_name or DEFAULT_CLAUDE,
+            temperature=temperature,
+            max_tokens=800,
+        )
+    return ChatOllama(model=model_name or DEFAULT_OLLAMA, temperature=temperature)
+
+def make_chain(vs: Chroma, llm: BaseChatModel, k: int):
+    retriever = vs.as_retriever(search_kwargs={"k": k})
+    memory = ConversationBufferMemory(
+        memory_key="chat_history",
+        output_key="answer",
+        return_messages=True
+    )
+    return ConversationalRetrievalChain.from_llm(
+        llm=llm,
+        retriever=retriever,
+        memory=memory,
+        return_source_documents=True,
+        verbose=False,
+    )
+
+
+# --------------------- Defaults + auto-index ---------------------
+def settings_defaults() -> Dict[str, Any]:
+    kb_dir = get_kb_dir()
+    return {
+        "persist_dir": ".chroma",
+        "collection_name": f"kb-{stable_hash(kb_dir)}",
+        "base_folder": kb_dir,
+        "emb_model": _EMB_MODEL,
+        "chunk_cfg": ChunkingConfig(),
+        "backend": "Claude (Anthropic)",
+        "ollama_model": DEFAULT_OLLAMA,
+        "claude_model": DEFAULT_CLAUDE,
+        "temperature": 0.2,
+        "top_k": 5,
+        "auto_index_min_interval_sec": 8,
+    }
+
+def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optional[Chroma]:
+    folder = st.session_state.get("base_folder")
+    persist = st.session_state.get("persist_dir")
+    colname = st.session_state.get("collection_name")
+    emb_model = st.session_state.get("emb_model")
+    min_gap = int(st.session_state.get("auto_index_min_interval_sec", 8))
+
+    sig_now, file_count = compute_kb_signature(folder)
+    last_sig = st.session_state.get("_kb_last_sig")
+    last_time = float(st.session_state.get("_kb_last_index_ts", 0.0))
+    now = time.time()
+
+    need_index = (last_sig != sig_now) or (last_sig is None)
+    throttled = (now - last_time) < min_gap
+    target = status_placeholder if status_placeholder is not None else st
+
+    if need_index and not throttled:
+        try:
+            target.markdown('<div class="status-inline">Indexing…</div>', unsafe_allow_html=True)
+            n_docs, n_chunks = index_folder_langchain(folder, persist, colname, emb_model, st.session_state.get("chunk_cfg", ChunkingConfig()))
+            st.session_state["_kb_last_sig"] = sig_now
+            st.session_state["_kb_last_index_ts"] = now
+            st.session_state["_kb_last_counts"] = {"files": file_count, "docs": n_docs, "chunks": n_chunks}
+            label = f"Indexed: <b>{n_docs}</b> files processed, <b>{n_chunks}</b> chunks"
+        except Exception as e:
+            label = f"Auto-index failed: <b>{e}</b>"
+        target.markdown(f'<div class="status-inline">{label}</div>', unsafe_allow_html=True)
+    else:
+        ts = st.session_state.get("_kb_last_index_ts")
+        when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else "—"
+        target.markdown(f'<div class="status-inline">Auto-index is <b>ON</b> · Files: <b>{file_count}</b> · Last indexed: <b>{when}</b> · Collection: <code>{colname}</code></div>', unsafe_allow_html=True)
+
+    try:
+        return get_vectorstore(persist, colname, emb_model)
+    except Exception:
+        return None
+
+# --------------------- UI Functions ---------------------
+
+def render_sidebar():
+    """Renders the entire Streamlit sidebar with settings."""
+    with st.sidebar:
+        lp = _resolve_logo_path()
+        if lp and Path(lp).exists():
+            try:
+                st.image(str(lp), caption="iSOFT ANZ Pvt Ltd", width=240)
+            except Exception:
+                pass
+        else:
+            st.info("Add assets/isoft_logo.png for branding.")
+
+        st.subheader("⚙️ Settings")
+        st.caption("Auto-index is enabled. Edit paths/models below if needed.")
+
+        # --- KB Settings ---
+        st.session_state["base_folder"] = st.text_input("Knowledge Base Folder", value=st.session_state["base_folder"])
+        st.session_state["persist_dir"] = st.text_input("Chroma Persist Directory", value=st.session_state["persist_dir"])
+        st.session_state["collection_name"] = st.text_input("Collection Name", value=st.session_state["collection_name"])
+
+        st.divider()
+
+        # --- LLM Settings ---
+        st.session_state["backend"] = st.radio("LLM Backend", ["Claude (Anthropic)", "Ollama (local)"], index=0, key="llm_backend_radio")
+        if st.session_state["backend"].startswith("Claude"):
+            st.session_state["claude_model"] = st.text_input("Claude Model Name", value=st.session_state["claude_model"])
+        else:
+            st.session_state["ollama_model"] = st.text_input("Ollama Model Name", value=st.session_state["ollama_model"])
+
+        st.session_state["temperature"] = st.slider("Temperature", 0.0, 1.0, 0.2, 0.05)
+        st.session_state["top_k"] = st.slider("Top-K (Retrieval)", 1, 15, 5)
+        st.session_state["auto_index_min_interval_sec"] = st.number_input(
+            "Auto-index min interval (sec)", min_value=1, max_value=300, value=8, step=1
+        )
+
+        # Anthropic status
+        try:
+            import anthropic as _anth
+            st.caption(
+                f"anthropic=={getattr(_anth, '__version__', 'unknown')} • direct client mode"
+            )
+        except Exception:
+            st.caption("anthropic not importable")
+
+def render_chat_history():
+    """Renders the chat history using st.chat_message."""
+    for message in st.session_state["messages"]:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+# --------------------- Main Execution Logic ---------------------
+
+def handle_user_input(query: str, vs: Optional[Chroma]):
+    """Processes the user query, updates history, and runs the RAG chain."""
+
+    # 1. Append user message
+    st.session_state["messages"].append({"role": "user", "content": query})
+
+    # 2. Short-circuit for simple greetings (improves latency)
+    if len(query) <= 40 and GREETING_RE.match(query):
+        st.session_state["messages"].append(
+            {"role": "assistant", "content": "Hello! How can I help you today with your Knowledge Base?"}
+        )
+        st.rerun()
+        return
+
+    # 3. Check Vector Store
+    if vs is None:
+        st.session_state["messages"].append(
+            {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
+        )
+        st.rerun()
+        return
+
+    # 4. Initialize LLM
+    backend = st.session_state["backend"]
+    model_name = (
+        st.session_state["claude_model"]
+        if backend.startswith("Claude")
+        else st.session_state["ollama_model"]
+    )
+    try:
+        llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
+    except Exception as e:
+        st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
+        st.rerun()
+        return
+
+    # 5. Run RAG Chain
+    chain = make_chain(vs, llm, int(st.session_state["top_k"]))
+
+    t0 = time.time()
+    try:
+        with st.spinner(f"Querying {backend} with RAG..."):
+            result = chain.invoke({"question": query})
+            answer = result.get("answer", "").strip() or "I could not find an answer in the Knowledge Base."
+            sources = result.get("source_documents", []) or []
+
+        # Build citation block if sources exist
+        citation_block = build_citation_block(
+            sources, kb_root=st.session_state.get("base_folder")
+        )
+
+        msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
+
+    except Exception as e:
+        msg = f"RAG error: {e}"
+
+    # 6. Append assistant message
+    st.session_state["messages"].append({"role": "assistant", "content": msg})
+    st.rerun()
+
+
+def main():
+    # 1. Initialize session state defaults
+    for k, v in settings_defaults().items():
+        st.session_state.setdefault(k, v)
+
+    # 2. Render UI
+    render_sidebar()
+
+    # Title & Index Status
+    st.markdown("### 💬 Chat with your Knowledge Base (LangChain RAG)")
+    hero_status = st.container()
+    vs = auto_index_if_needed(status_placeholder=hero_status)
+
+    # Initial Chat History
+    st.session_state.setdefault(
+        "messages",
+        [{"role": "assistant", "content": "Hi! Ask anything about your Knowledge Base."}],
+    )
+
+    # Chat UI container
+    st.markdown('<div class="chat-card">', unsafe_allow_html=True)
+    st.markdown('<div class="chat-scroll">', unsafe_allow_html=True)
+    render_chat_history()
+    st.markdown("</div>", unsafe_allow_html=True) # End chat-scroll
+
+    # Composer (now just the text input)
+    st.markdown('<div class="composer">', unsafe_allow_html=True)
+
+    # Use the native st.chat_input for the user prompt
+    user_text = st.chat_input(
+        "Type your question...",
+        key="user_prompt_input"
+    )
+
+    st.markdown("</div>", unsafe_allow_html=True) # End composer
+    st.markdown("</div>", unsafe_allow_html=True) # End chat-card
+
+    # 3. Handle User Input
+    if user_text and user_text.strip():
+        handle_user_input(user_text.strip(), vs)
+
+if __name__ == "__main__":
+    main()
