@@ -79,10 +79,14 @@ def _img_to_data_uri(path: Optional[Path]) -> Optional[str]:
     ext = (path.suffix.lower().lstrip(".") or "png")
     mime = "image/png" if ext in ("png", "apng") else ("image/jpeg" if ext in ("jpg", "jpeg") else "image/svg+xml")
     return f"data:{mime};base64,{b64}"
-
+# Resolve avatar file paths and convert to data URIs BEFORE use
+USER_AVATAR_PATH, ASSIST_AVATAR_PATH = _resolve_avatar_paths()
+USER_AVATAR_URI = _img_to_data_uri(USER_AVATAR_PATH)
+ASSIST_AVATAR_URI = _img_to_data_uri(ASSIST_AVATAR_PATH)
 # Build dynamic background-image declarations
 user_bg  = f"background-image:url('{USER_AVATAR_URI}');" if USER_AVATAR_URI else ""
 asst_bg  = f"background-image:url('{ASSIST_AVATAR_URI}');" if ASSIST_AVATAR_URI else ""
+
 
 css = """
 <style>
