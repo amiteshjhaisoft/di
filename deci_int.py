@@ -158,7 +158,8 @@ def build_citation_block(source_docs: List[Document], kb_root: str | None = None
 
     counts = Counter(names)
     lines = [f"- {name}" + (f" ×{n}" if n > 1 else "") for name, n in counts.items()]
-    return "\n\n**Sources**\n" + "\n".join(lines)
+    # return "\n\n**Sources**\n" + "\n".join(lines)
+    return ""
 
 # --------------------- UI / THEME (No changes needed) ---------------------
 # ... (css and sidebar functions are omitted for brevity, as they are unchanged)
