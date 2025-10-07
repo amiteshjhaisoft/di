@@ -1,8 +1,8 @@
 # Author: Amitesh Jha | iSoft | 2025-10-07
 # LangChain refactor of your LLM chat + local RAG (Chroma) Streamlit app.
-# - Uses: Directory -> Loaders -> TextSplitter -> Embeddings -> Chroma -> ConversationalRetrievalChain
+# - Pipeline: Directory -> Loaders -> TextSplitter -> Embeddings -> Chroma -> ConversationalRetrievalChain
 # - LLMs: Claude (Anthropic) or local Ollama
-# - Robust to Chroma 0.5+ (persistent store, telemetry disabled, single instance)
+# - Hardened for Chroma 0.5+, Streamlit widget rules, and Anthropic client weirdness (e.g., proxies kwarg)
 #
 # Install:
 #   pip install -r requirements.txt
@@ -19,7 +19,17 @@
 
 from __future__ import annotations
 
-import os, io, re, gc, glob, time, uuid, base64, hashlib, logging, shutil
+import os
+import io
+import re
+import gc
+import glob
+import time
+import uuid
+import base64
+import hashlib
+import logging
+import shutil
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Optional
 from pathlib import Path
@@ -169,7 +179,8 @@ def compute_kb_signature(folder: str) -> Tuple[str, int]:
         except Exception:
             continue
     lines.sort()
-    raw = "\n".join(lines)
+    raw = "
+".join(lines)
     return stable_hash(raw if raw else f"EMPTY-{time.time()}"), len(files)
 
 # ======================================================================
@@ -183,14 +194,18 @@ def _fallback_read(path: str) -> str:
             df = pd.read_excel(path)
             df = df.astype(str).iloc[:1000, :50]
             header = " | ".join(df.columns.tolist())
-            body = "\n".join(" | ".join(row) for row in df.values.tolist())
-            return f"{header}\n{body}"
+            body = "
+".join(" | ".join(row) for row in df.values.tolist())
+            return f"{header}
+{body}"
         if path.lower().endswith((".csv", ".tsv")):
-            df = pd.read_csv(path, sep="\t" if path.lower().endswith(".tsv") else ",")
+            df = pd.read_csv(path, sep="	" if path.lower().endswith(".tsv") else ",")
             df = df.astype(str).iloc[:1000, :50]
             header = " | ".join(df.columns.tolist())
-            body = "\n".join(" | ".join(row) for row in df.values.tolist())
-            return f"{header}\n{body}"
+            body = "
+".join(" | ".join(row) for row in df.values.tolist())
+            return f"{header}
+{body}"
         return Path(path).read_text(encoding="utf-8", errors="ignore")
     except Exception:
         try:
@@ -211,7 +226,7 @@ def load_one(path: str) -> List[Document]:
         if p.endswith(".csv"):
             return CSVLoader(path).load()
         if p.endswith(".tsv"):
-            return CSVLoader(path, csv_args={"delimiter": "\t"}).load()
+            return CSVLoader(path, csv_args={"delimiter": "	"}).load()
         if p.endswith((".txt", ".md", ".json", ".xml", ".rtf", ".pptx", ".xlsx", ".xlsm", ".xltx")):
             txt = _fallback_read(path)
             if not txt.strip():
@@ -261,7 +276,10 @@ def index_folder_langchain(
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_cfg.chunk_size,
         chunk_overlap=chunk_cfg.chunk_overlap,
-        separators=["\n\n", "\n", ". ", " "],
+        separators=["
+
+", "
+", ". ", " "],
     )
     splat = splitter.split_documents(raw_docs)
 
@@ -305,7 +323,7 @@ DEFAULT_CLAUDE = "claude-3-5-sonnet-20240620"
 
 def make_llm(backend: str, model_name: str, temperature: float):
     if backend.startswith("Claude"):
-        # Build Anthropic client explicitly to avoid env-injected unsupported kwargs (e.g. 'proxies')
+        # Build Anthropic client explicitly to avoid env-injected unsupported kwargs (e.g., 'proxies')
         client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         return ChatAnthropic(client=client, model=model_name, temperature=temperature, max_tokens=800)
     # Ollama (local)
@@ -493,7 +511,6 @@ def main():
             st.session_state["messages"].append(
                 {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
             )
-            # Clear by bumping the nonce and rerun
             st.session_state["_compose_nonce"] += 1
             st.rerun()
 
@@ -531,45 +548,8 @@ _(Answered in {human_time((time.time()-t0)*1000)})_"
             msg = f"RAG error: {e}"
         st.session_state["messages"].append({"role": "assistant", "content": msg})
 
-        # ✅ Clear input by incrementing the nonce (no direct value mutation)
+        # Clear input by incrementing the nonce (no direct value mutation)
         st.session_state["_compose_nonce"] += 1
-        st.rerun()
-
-        # LLM
-        backend = st.session_state["backend"]
-        model_name = st.session_state["claude_model"] if backend.startswith("Claude") else st.session_state["ollama_model"]
-        try:
-            llm = make_llm(backend, model_name, float(st.session_state["temperature"]))
-        except Exception as e:
-            st.session_state["messages"].append({"role": "assistant", "content": f"LLM init error: {e}"})
-            st.session_state["compose_input"] = ""
-            st.rerun()
-
-        # Chain
-        chain = make_chain(vs, llm, int(st.session_state["top_k"]))
-
-        t0 = time.time()
-        try:
-            result = chain.invoke({"question": query})
-            answer = result.get("answer", "").strip() or "(no answer)"
-            sources = result.get("source_documents", []) or []
-            cited = []
-            for i, d in enumerate(sources, start=1):
-                src = (d.metadata or {}).get("source", "unknown")
-                cited.append(f"[{i}] {src}")
-            if cited:
-                citation_block = "
-
-Sources:
-" + "
-".join(cited)
-            else:
-                citation_block = ""
-            msg = f"{answer}{citation_block}\n\n_(Answered in {human_time((time.time()-t0)*1000)})_"
-        except Exception as e:
-            msg = f"RAG error: {e}"
-        st.session_state["messages"].append({"role": "assistant", "content": msg})
-        st.session_state["compose_input"] = ""
         st.rerun()
 
 
