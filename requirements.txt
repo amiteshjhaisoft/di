@@ -13,8 +13,9 @@ hnswlib==0.8.0
 
 # --- Embeddings ---
 sentence-transformers==2.7.0
+transformers==4.44.2
 # CPU build; if you have CUDA, replace with the appropriate torch extra (e.g., +cu121)
-torch>=2.1.0
+torch>=2.1.0,<2.5
 
 # --- Loaders / parsing ---
 pypdf==4.2.0
