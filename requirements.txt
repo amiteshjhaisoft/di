@@ -31,5 +31,6 @@ pandas==2.2.2
 python-dotenv==1.0.1
 
 
-faiss-gpu
+faiss-cpu
+
 
