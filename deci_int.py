@@ -501,6 +501,8 @@ def render_sidebar():
 def render_chat_history():
     """Renders the chat history using st.chat_message."""
     for message in st.session_state["messages"]:
+        # The 'role' attribute (user/assistant) automatically maps to the correct avatar 
+        # based on the CSS injected earlier (which uses avatar.png and llm.png).
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
