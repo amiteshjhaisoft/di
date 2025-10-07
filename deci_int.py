@@ -742,7 +742,7 @@ def main():
     with st.sidebar:
         logo_path = _resolve_logo_path()
         if logo_path:
-            st.image(str(logo_path), caption="iSOFT ANZ Pvt Ltd", use_container_width=True)
+            st.image(str(logo_path), caption="iSOFT ANZ Pvt Ltd", use_column_width=True)
         st.subheader("⚙️ Settings")
         st.caption("Auto-index is enabled. Edit paths/models below if needed.")
 
