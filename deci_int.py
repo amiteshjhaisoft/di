@@ -26,6 +26,8 @@ from pathlib import Path
 import requests
 import pandas as pd
 import streamlit as st
+import shutil
+import inspect
 
 # -------------------------------------------------------------------
 # Paths & helpers
@@ -260,6 +262,40 @@ div[data-testid="stDecoration"]{{ display:none; }}
 # -------------------------------------------------------------------
 # Utilities
 # -------------------------------------------------------------------
+
+
+# ---- Streamlit image compatibility wrapper ----
+def st_image_compat(*args, **kwargs):
+    """
+    Wrapper for st.image that tolerates different Streamlit versions and
+    the presence of use_container_width/use_column_width kwargs.
+    If the underlying st.image doesn't accept a kwarg, falls back to width.
+    """
+    use_container = kwargs.pop("use_container_width", None)
+    use_column = kwargs.pop("use_column_width", None)
+    try:
+        sig = inspect.signature(st.image)
+    except Exception:
+        sig = None
+    kw = dict(kwargs)
+    accepts_container = False
+    accepts_column = False
+    if sig:
+        params = sig.parameters
+        accepts_container = "use_container_width" in params
+        accepts_column = "use_column_width" in params
+    if accepts_container and use_container is not None:
+        kw["use_container_width"] = use_container
+        return st.image(*args, **kw)
+    if accepts_column and use_column is not None:
+        kw["use_column_width"] = use_column
+        return st.image(*args, **kw)
+    if (use_container or use_column):
+        try:
+            return st.image(*args, width=700, **kw)
+        except Exception:
+            pass
+    return st.image(*args, **kw)
 TEXT_EXTS = {".txt", ".md", ".rtf", ".html", ".htm", ".json", ".xml"}
 DOC_EXTS  = {".pdf", ".docx", ".csv", ".tsv", ".xlsx", ".xlsm", ".xltx", ".pptx"}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
@@ -524,11 +560,40 @@ def split_text_recursive(text: str, cfg: ChunkingConfig) -> List[str]:
     return [c.strip() for c in final_chunks if c.strip()]
 
 # ----- Chroma -----
-def get_chroma_client(persist_dir: str) -> chromadb.Client:
-    import os
-    os.makedirs(persist_dir, exist_ok=True)
-    return chromadb.Client(Settings(anonymized_telemetry=False, persist_directory=persist_dir))
 
+def get_chroma_client(persist_dir: str) -> chromadb.Client:
+    """
+    Return a local chroma client using DuckDB+Parquet persistent store.
+    If the existing persistence folder appears corrupted (causing errors),
+    this function will attempt to reset the directory and recreate a fresh DB.
+    WARNING: resetting the directory will delete previously persisted embeddings.
+    """
+    import os
+    from chromadb.config import Settings
+
+    os.makedirs(persist_dir, exist_ok=True)
+
+    settings = Settings(
+        anonymized_telemetry=True,
+        chroma_db_impl="duckdb+parquet",
+        persist_directory=persist_dir,
+    )
+
+    try:
+        client = chromadb.Client(settings=settings)
+        return client
+    except Exception as e:
+        # Attempt recovery by removing the persistence dir and retrying once.
+        try:
+            shutil.rmtree(persist_dir)
+        except Exception:
+            raise RuntimeError(f"Chroma init failed and cleanup failed: {e}")
+        os.makedirs(persist_dir, exist_ok=True)
+        try:
+            client = chromadb.Client(settings=settings)
+            return client
+        except Exception as e2:
+            raise RuntimeError(f"Chroma init failed after reset: {e2}")
 def get_sentence_transformer_fn(model_name: str):
     return embedding_functions.SentenceTransformerEmbeddingFunction(model_name=model_name, device=None)
 
@@ -874,7 +939,7 @@ def main():
     with st.sidebar:
         logo_path = _resolve_logo_path()
         if logo_path:
-            st.image(str(logo_path), caption="iSOFT ANZ Pvt Ltd", use_column_width=True)
+            st_image_compat(str(logo_path), caption="iSOFT ANZ Pvt Ltd", use_column_width=True)
         st.subheader("⚙️ Settings")
         st.caption("Auto-index is enabled. Edit paths/models below if needed.")
 
