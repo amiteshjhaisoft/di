@@ -218,13 +218,18 @@ _EMB_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 _EMB_MODEL_KW = {
     "device": "cpu",
     "trust_remote_code": False,
-    "torch_dtype": "float32",
 }
-_ENCODE_KW = {"normalize_embeddings": True}
+_ENCODE_KW = {
+    "normalize_embeddings": True,
+    "show_progress_bar": False,  # optional
+}
 
 def _make_embeddings():
-    # Force CPU + float32 so we never move from meta tensors
-    return HuggingFaceEmbeddings(model_name=_EMB_MODEL, model_kwargs=_EMB_MODEL_KW, encode_kwargs=_ENCODE_KW)
+    return HuggingFaceEmbeddings(
+        model_name=_EMB_MODEL,
+        model_kwargs=_EMB_MODEL_KW,
+        encode_kwargs=_ENCODE_KW,
+    )
 
 def index_folder_langchain(folder: str, persist_dir: str, collection_name: str, emb_model: str, chunk_cfg: ChunkingConfig) -> Tuple[int, int]:
     raw_docs = load_documents(folder)
