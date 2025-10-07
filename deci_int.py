@@ -814,15 +814,32 @@ def settings_defaults():
 # -------------------------------------------------------------------
 # Auto-index (renders status inline on RHS) — NO st.status (no white pill)
 # -------------------------------------------------------------------
-def auto_index_if_needed(status_placeholder=None):
-    folder = st.session_state["base_folder"]
-    persist = st.session_state["persist_dir"]
-    colname = st.session_state["collection_name"]
-    emb_model = st.session_state["emb_model"]
+
+def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optional["chromadb.Client"]:
+    """
+    Ensure the local Knowledge Base is indexed in Chroma when needed.
+    Returns a chromadb client if available, otherwise None.
+    """
+    folder = st.session_state.get("base_folder")
+    persist = st.session_state.get("persist_dir")
+    colname = st.session_state.get("collection_name")
+    emb_model = st.session_state.get("emb_model")
     min_gap = int(st.session_state.get("auto_index_min_interval_sec", 8))
 
-    client = get_chroma_client(persist)
+    # Try to get Chroma client; if it fails, warn user and skip auto-indexing.
+    try:
+        client = get_chroma_client(persist)
+    except Exception as e:
+        try:
+            st.warning(
+                f"Chroma unavailable or failed to initialize: {e}. "
+                "RAG features will be disabled. Check logs (/tmp/chroma-init-error.log) for details."
+            )
+        except Exception:
+            pass
+        return None
 
+    # compute a signature for the KB (files + contents) to decide if re-index is needed
     sig_now, file_count = compute_kb_signature(folder)
     last_sig = st.session_state.get("_kb_last_sig")
     last_time = float(st.session_state.get("_kb_last_index_ts", 0.0))
@@ -835,13 +852,19 @@ def auto_index_if_needed(status_placeholder=None):
 
     if need_index and not throttled:
         try:
+            target.markdown('<div class="status-inline">Indexing…</div>', unsafe_allow_html=True)
             n_docs, n_chunks = index_folder(
-                folder=folder, client=client, collection_name=colname,
-                embedding_model=emb_model, chunk_cfg=st.session_state["chunk_cfg"],
+                folder=folder,
+                client=client,
+                collection_name=colname,
+                embedding_model=emb_model,
+                chunk_cfg=st.session_state.get("chunk_cfg", {}),
             )
-    st.session_state["_kb_last_sig"] = sig_now
-    st.session_state["_kb_last_index_ts"] = now
-    st.session_state["_kb_last_counts"] = {"files": file_count, "docs": n_docs, "chunks": n_chunks}
+
+            # update session state bookkeeping
+            st.session_state["_kb_last_sig"] = sig_now
+            st.session_state["_kb_last_index_ts"] = now
+            st.session_state["_kb_last_counts"] = {"files": file_count, "docs": n_docs, "chunks": n_chunks}
             label = f"Indexed: <b>{n_docs}</b> files processed, <b>{n_chunks}</b> chunks"
         except Exception as e:
             label = f"Auto-index failed: <b>{e}</b>"
@@ -851,10 +874,10 @@ def auto_index_if_needed(status_placeholder=None):
         when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else "—"
         target.markdown(
             f'<div class="status-inline">Auto-index is <b>ON</b> · Files: <b>{file_count}</b> · Last indexed: <b>{when}</b> · Collection: <code>{colname}</code></div>',
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
-    return client
 
+    return client
 # -------------------------------------------------------------------
 # Main
 # -------------------------------------------------------------------
