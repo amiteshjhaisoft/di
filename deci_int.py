@@ -887,26 +887,26 @@ if logo_path:
         except Exception:
             pass
 
-# Chroma admin helper (best-effort, don't let it crash the sidebar)
-try:
-    show_chroma_admin_ui()
-except Exception:
-    pass
+    # Chroma admin helper (best-effort, don't let it crash the sidebar)
+    try:
+        show_chroma_admin_ui()
+    except Exception:
+        pass
 
-st.subheader("⚙️ Settings")
-st.caption("Auto-index is enabled. Edit paths/models below if needed.")
-st.session_state["base_folder"] = st.text_input("Knowledge Base", value=st.session_state.get("base_folder", get_kb_dir()))
+        st.subheader("⚙️ Settings")
+        st.caption("Auto-index is enabled. Edit paths/models below if needed.")
+        st.session_state["base_folder"] = st.text_input("Knowledge Base", value=st.session_state.get("base_folder", get_kb_dir()))
         st.session_state["persist_dir"] = st.text_input("Chroma persist", value=st.session_state["persist_dir"])
         st.session_state["collection_name"] = st.text_input("Collection", value=st.session_state["collection_name"])
         st.session_state["emb_model"] = st.selectbox(
-            "Embedding model",
-            [
-                "sentence-transformers/all-MiniLM-L6-v2",
-                "sentence-transformers/all-MiniLM-L12-v2",
-                "sentence-transformers/multi-qa-MiniLM-L6-cos-v1",
-            ],
-            index=0,
-        )
+                    "Embedding model",
+                    [
+                        "sentence-transformers/all-MiniLM-L6-v2",
+                        "sentence-transformers/all-MiniLM-L12-v2",
+                        "sentence-transformers/multi-qa-MiniLM-L6-cos-v1",
+                    ],
+                    index=0,
+                )
         st.session_state["backend"] = st.radio("LLM", ["Claude (Anthropic)", "Ollama (local)"], index=0)
         if st.session_state["backend"].startswith("Claude"):
             st.session_state["claude_model"] = st.text_input("Claude model", value=st.session_state["claude_model"])
