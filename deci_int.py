@@ -6,7 +6,7 @@ import os, glob, time, base64, hashlib, logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any, Type, Union
 
 import streamlit as st
 import pandas as pd
@@ -16,13 +16,13 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")            # force no CUDA
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
-# Quiet Chroma / disable OTel
-os.environ.setdefault("CHROMA_TELEMETRY_IMPLEMENTATION", "none")
-os.environ.setdefault("OTEL_SDK_DISABLED", "true")
-logging.getLogger("chromadb").setLevel(logging.WARNING)
+# Quiet Chroma / disable OTel (Removed Chroma-specific settings)
+# os.environ.setdefault("CHROMA_TELEMETRY_IMPLEMENTATION", "none")
+# os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+# logging.getLogger("chromadb").setLevel(logging.WARNING)
 
-# LangChain bits
-from langchain_community.vectorstores import Chroma
+# LangChain bits (FAISS & Imports updated)
+from langchain_community.vectorstores import FAISS # <--- CHANGED FROM CHROMA
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
@@ -63,7 +63,7 @@ _ENCODE_KW = {
 
 # --- Supported Extensions for Text/Documents ---
 TEXT_EXTS = {".txt", ".md", ".rtf", ".html", ".htm", ".json", ".xml"}
-DOC_EXTS  = {".pdf", ".docx", ".csv", ".tsv", ".pptx", ".pptm", ".doc", ".odt"}  # Added .doc, .odt
+DOC_EXTS  = {".pdf", ".docx", ".csv", ".tsv", ".pptx", ".pptm", ".doc", ".odt"}
 SPREADSHEET_EXTS = {".xlsx", ".xlsm", ".xltx"}
 SUPPORTED_TEXT_DOCS = TEXT_EXTS | DOC_EXTS | SPREADSHEET_EXTS
 
@@ -74,6 +74,7 @@ VIDEO_EXTS = {".mp4", ".mov", ".avi"}
 
 SUPPORTED_EXTS = SUPPORTED_TEXT_DOCS | IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
 
+
 GREETING_RE = re.compile(
     r"""^\s*(
         hi|hello|hey|hiya|yo|hola|namaste|namaskar|g'day|
@@ -81,6 +82,9 @@ GREETING_RE = re.compile(
     )[\s!,.?]*$""",
     re.IGNORECASE | re.VERBOSE,
 )
+
+# Define the VectorStore type for type hinting (either FAISS or the old Chroma)
+VectorStoreType = FAISS # <--- CHANGED TYPE HINT
 
 # --------------------- Minimal direct Claude model (bypass proxies kw path) ---------------------
 
@@ -139,6 +143,7 @@ def build_citation_block(source_docs: List[Document], kb_root: str | None = None
 
         try:
             if kb_root:
+                # Use a stable relative path for display
                 rel = Path(src).resolve().relative_to(Path(kb_root).resolve())
                 display = str(rel)
             else:
@@ -155,6 +160,8 @@ def build_citation_block(source_docs: List[Document], kb_root: str | None = None
     lines = [f"- {name}" + (f" ×{n}" if n > 1 else "") for name, n in counts.items()]
     return "\n\n**Sources**\n" + "\n".join(lines)
 
+# --------------------- UI / THEME (No changes needed) ---------------------
+# ... (css and sidebar functions are omitted for brevity, as they are unchanged)
 # --------------------- UI / THEME ---------------------
 st.set_page_config(page_title="LLM Chat • LangChain RAG", page_icon="💬", layout="wide")
 
@@ -195,7 +202,7 @@ asst_bg  = f"background-image:url('{ASSIST_AVATAR_URI}');" if ASSIST_AVATAR_URI 
 
 css = """
 <style>
-:root{ 
+:root{
   --bg:#f7f8fb; --sidebar-bg:#f5f7fb; --panel:#fff; --text:#0b1220;
   --muted:#5d6b82; --accent:#2563eb; --border:#e7eaf2;
   --bubble-user:#eef4ff; --bubble-assist:#f6f7fb;
@@ -260,7 +267,7 @@ def compute_kb_signature(folder: str) -> Tuple[str, int]:
     raw += str(SUPPORTED_TEXT_DOCS)
     return stable_hash(raw if raw else f"EMPTY-{time.time()}"), len(files)
 
-# --------------------- Loading ---------------------
+# --------------------- Loading (No changes needed) ---------------------
 def _fallback_read(path: str) -> str:
     """Handles text extraction for simple/spreadsheet files not covered by LangChain loaders."""
     try:
@@ -327,7 +334,8 @@ def load_documents(folder: str) -> List[Document]:
         docs.extend(load_one(path))
     return docs
 
-# --------------------- Full-document helpers (NEW) -----------------------------
+# --------------------- Full-document helpers (Removed FAISS-incompatible function) -----------------------------
+
 def _concat_docs(docs: List[Document]) -> str:
     parts = []
     for i, d in enumerate(docs, 1):
@@ -362,47 +370,38 @@ def read_whole_doc_by_name(name_or_stem: str, base_folder: str) -> Tuple[str, Li
             texts.append(f"[Error reading {os.path.basename(p)}: {e}]")
     return ("\n\n".join(t for t in texts if t.strip()) or ""), candidates
 
-def get_all_chunks_from_vectorstore(vs: Chroma, source_basename: str) -> str:
-    """
-    Retrieve *all* chunks whose metadata.source contains the basename.
-    Uses Chroma collection directly.
-    """
-    try:
-        coll = vs._collection  # type: ignore
-    except Exception:
-        return ""
-    res = coll.get(where={"source": {"$contains": source_basename}})
-    docs = res.get("documents") or []
-    mets = res.get("metadatas") or []
-    out = []
-    for i, (txt, md) in enumerate(zip(docs, mets), 1):
-        page = md.get("page")
-        src = md.get("source", source_basename)
-        hdr = (
-            f"\n\n--- [chunk {i} | page {page}] {Path(src).name} ---\n"
-            if page is not None else
-            f"\n\n--- [chunk {i}] {Path(src).name} ---\n"
-        )
-        out.append(hdr + (txt or ""))
-    return "".join(out).strip()
+# Removed: get_all_chunks_from_vectorstore (This relied on Chroma's specific metadata filtering.)
 
-# --------------------- Indexing ---------------------
+# --------------------- Indexing (Refactored for FAISS persistence) ---------------------
 @dataclass
 class ChunkingConfig:
     chunk_size: int = 1200
     chunk_overlap: int = 200
 
 def _make_embeddings():
-    return HuggingFaceEmbeddings(
+    key = f"_emb_model_cache::{_EMB_MODEL}"
+    if key in st.session_state:
+        return st.session_state[key]
+    embeddings = HuggingFaceEmbeddings(
         model_name=_EMB_MODEL,
         model_kwargs=_EMB_MODEL_KW,
         encode_kwargs=_ENCODE_KW,
     )
+    st.session_state[key] = embeddings
+    return embeddings
+
 
 def index_folder_langchain(folder: str, persist_dir: str, collection_name: str, emb_model: str, chunk_cfg: ChunkingConfig) -> Tuple[int, int]:
     raw_docs = load_documents(folder)
     if not raw_docs:
+        # Clear any old FAISS index if no documents are found
+        faiss_dir = Path(persist_dir) / collection_name
+        if faiss_dir.exists():
+             for f in faiss_dir.glob("*"):
+                 os.remove(f)
+             os.rmdir(faiss_dir)
         return (0, 0)
+    
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_cfg.chunk_size,
         chunk_overlap=chunk_cfg.chunk_overlap,
@@ -410,24 +409,43 @@ def index_folder_langchain(folder: str, persist_dir: str, collection_name: str, 
     )
     splat = splitter.split_documents(raw_docs)
     embeddings = _make_embeddings()
-    _ = Chroma.from_documents(
+    
+    # --- FAISS CREATION ---
+    faiss_db = FAISS.from_documents(
         documents=splat,
         embedding=embeddings,
-        collection_name=collection_name,
-        persist_directory=persist_dir
-    ).persist()
+    )
+    
+    # --- FAISS PERSISTENCE ---
+    faiss_db.save_local(folder_path=Path(persist_dir) / collection_name)
+    
     return (len(raw_docs), len(splat))
 
-def get_vectorstore(persist_dir: str, collection_name: str, emb_model: str) -> Chroma:
+def get_vectorstore(persist_dir: str, collection_name: str, emb_model: str) -> Optional[FAISS]:
     key = f"_vs::{persist_dir}::{collection_name}::{emb_model}"
     if key in st.session_state:
         return st.session_state[key]
-    embeddings = _make_embeddings()
-    vs = Chroma(collection_name=collection_name, persist_directory=persist_dir, embedding_function=embeddings)
-    st.session_state[key] = vs
-    return vs
+    
+    faiss_path = Path(persist_dir) / collection_name
+    if not faiss_path.exists():
+        return None # Index hasn't been created yet
 
-# --------------------- Anthropic init helpers ---------------------
+    embeddings = _make_embeddings() # FAISS requires the embedding function to be passed during load
+    
+    try:
+        # --- FAISS LOADING ---
+        vs = FAISS.load_local(
+            folder_path=faiss_path,
+            embeddings=_make_embeddings(), # Must recreate the embeddings object on load
+            allow_dangerous_deserialization=True # Necessary for loading some LangChain FAISS index formats
+        )
+        st.session_state[key] = vs
+        return vs
+    except Exception as e:
+        st.error(f"Failed to load FAISS index from disk. Error: {e}")
+        return None
+
+# --------------------- Anthropic init helpers (No changes needed) ---------------------
 def _strip_proxy_env() -> None:
     for v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "NO_PROXY", "no_proxy"):
         os.environ.pop(v, None)
@@ -469,7 +487,7 @@ def _anthropic_client_from_secrets():
         return _AnthropicClientOld(api_key=api_key)
     raise RuntimeError("Anthropic SDK not installed correctly.")
 
-# --------------------- Chain builders ---------------------
+# --------------------- Chain builders (Updated type hint) ---------------------
 
 def make_llm(backend: str, model_name: str, temperature: float):
     if backend.startswith("Claude"):
@@ -482,7 +500,7 @@ def make_llm(backend: str, model_name: str, temperature: float):
         )
     return ChatOllama(model=model_name or DEFAULT_OLLAMA, temperature=temperature)
 
-def make_chain(vs: Chroma, llm: BaseChatModel, k: int):
+def make_chain(vs: VectorStoreType, llm: BaseChatModel, k: int): # <--- CHANGED TYPE HINT
     retriever = vs.as_retriever(search_kwargs={"k": k})
     memory = ConversationBufferMemory(
         memory_key="chat_history",
@@ -497,11 +515,11 @@ def make_chain(vs: Chroma, llm: BaseChatModel, k: int):
         verbose=False,
     )
 
-# --------------------- Defaults + auto-index ---------------------
+# --------------------- Defaults + auto-index (Updated type hint) ---------------------
 def settings_defaults() -> Dict[str, Any]:
     kb_dir = get_kb_dir()
     return {
-        "persist_dir": ".chroma",
+        "persist_dir": ".faiss_index", # <--- CHANGED DEFAULT DIRECTORY NAME
         "collection_name": f"kb-{stable_hash(kb_dir)}",
         "base_folder": kb_dir,
         "emb_model": _EMB_MODEL,
@@ -514,7 +532,7 @@ def settings_defaults() -> Dict[str, Any]:
         "auto_index_min_interval_sec": 8,
     }
 
-def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optional[Chroma]:
+def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optional[VectorStoreType]: # <--- CHANGED TYPE HINT
     folder = st.session_state.get("base_folder")
     persist = st.session_state.get("persist_dir")
     colname = st.session_state.get("collection_name")
@@ -529,6 +547,11 @@ def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optiona
     need_index = (last_sig != sig_now) or (last_sig is None)
     throttled = (now - last_time) < min_gap
     target = status_placeholder if status_placeholder is not None else st
+    
+    # Check if the FAISS index files exist on disk
+    faiss_path = Path(persist) / colname
+    index_exists = faiss_path.is_dir() and any(faiss_path.iterdir())
+
 
     if need_index and not throttled:
         try:
@@ -544,11 +567,26 @@ def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optiona
         except Exception as e:
             label = f"Auto-index failed: <b>{e}</b>"
         target.markdown(f'<div class="status-inline">{label}</div>', unsafe_allow_html=True)
+    elif not index_exists:
+         # Force re-index if the signature is the same but the file is missing (e.g., first run or cleanup)
+        try:
+            target.markdown('<div class="status-inline">Indexing (FAISS index missing)…</div>', unsafe_allow_html=True)
+            n_docs, n_chunks = index_folder_langchain(
+                folder, persist, colname, emb_model,
+                st.session_state.get("chunk_cfg", ChunkingConfig())
+            )
+            st.session_state["_kb_last_sig"] = sig_now
+            st.session_state["_kb_last_index_ts"] = now
+            st.session_state["_kb_last_counts"] = {"files": file_count, "docs": n_docs, "chunks": n_chunks}
+            label = f"Indexed: <b>{n_docs}</b> text/doc files processed, resulting in <b>{n_chunks}</b> chunks"
+        except Exception as e:
+            label = f"Auto-index failed: <b>{e}</b>"
+        target.markdown(f'<div class="status-inline">{label}</div>', unsafe_allow_html=True)
     else:
         ts = st.session_state.get("_kb_last_index_ts")
         when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else "—"
         target.markdown(
-            f'<div class="status-inline">Auto-index is <b>ON</b> · Files: <b>{file_count}</b> · Last indexed: <b>{when}</b> · Collection: <code>{colname}</code></div>',
+            f'<div class="status-inline">Auto-index is <b>ON</b> · Files: <b>{file_count}</b> · Last indexed: <b>{when}</b> · Index: <code>{colname}</code></div>',
             unsafe_allow_html=True
         )
 
@@ -557,7 +595,7 @@ def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optiona
     except Exception:
         return None
 
-# --------------------- UI Functions ---------------------
+# --------------------- UI Functions (No changes needed) ---------------------
 
 def render_sidebar():
     """Renders the entire Streamlit sidebar with settings."""
@@ -576,8 +614,8 @@ def render_sidebar():
 
         # --- KB Settings ---
         st.session_state["base_folder"] = st.text_input("Knowledge Base Folder", value=st.session_state["base_folder"])
-        st.session_state["persist_dir"] = st.text_input("Chroma Persist Directory", value=st.session_state["persist_dir"])
-        st.session_state["collection_name"] = st.text_input("Collection Name", value=st.session_state["collection_name"])
+        st.session_state["persist_dir"] = st.text_input("FAISS Persist Directory (Base)", value=st.session_state["persist_dir"]) # <--- UPDATED TEXT
+        st.session_state["collection_name"] = st.text_input("FAISS Index Folder Name", value=st.session_state["collection_name"]) # <--- UPDATED TEXT
 
         st.divider()
 
@@ -610,15 +648,15 @@ def render_chat_history():
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-# --------------------- Main Execution Logic ---------------------
+# --------------------- Main Execution Logic (Updated type hint) ---------------------
 
-def handle_user_input(query: str, vs: Optional[Chroma]):
+def handle_user_input(query: str, vs: Optional[VectorStoreType]): # <--- CHANGED TYPE HINT
     """Processes the user query, updates history, and runs the RAG chain."""
 
     # 1) Append user message
     st.session_state["messages"].append({"role": "user", "content": query})
 
-    # 2) Full-document commands (bypass retriever) — NEW
+    # 2) Full-document commands (bypass retriever)
     m = re.match(r"^\s*(read|open|show)\s+(.+)$", query, flags=re.IGNORECASE)
     if m:
         target = m.group(2).strip().strip('"').strip("'")
@@ -656,7 +694,7 @@ def handle_user_input(query: str, vs: Optional[Chroma]):
     # 4) Check Vector Store
     if vs is None:
         st.session_state["messages"].append(
-            {"role": "assistant", "content": "Vector store unavailable. Check your settings and try again."}
+            {"role": "assistant", "content": "Vector store unavailable. Check your settings and ensure the FAISS index exists."}
         )
         st.rerun()
         return
