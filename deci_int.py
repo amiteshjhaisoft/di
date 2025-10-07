@@ -296,6 +296,75 @@ def st_image_compat(*args, **kwargs):
         except Exception:
             pass
     return st.image(*args, **kw)
+
+# ---- Chroma admin helper (safe UI to inspect/reset .chroma) ----
+import shutil, time
+from pathlib import Path
+
+def _tail(path: str, n: int = 200) -> str:
+    p = Path(path)
+    if not p.exists():
+        return f"No file: {path}"
+    try:
+        with p.open("r", encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+            return "\n".join(lines[-n:])
+    except Exception as e:
+        return f"Error reading {path}: {e}"
+
+def show_chroma_admin_ui():
+    """
+    Add this to your sidebar (or admin page) to:
+      - view the tail of /tmp/chroma-init-error.log
+      - view .chroma top-level listing
+      - backup & reset .chroma via a button (best-effort)
+    """
+    try:
+        st.sidebar.markdown("### Chroma admin")
+        log_path = "/tmp/chroma-init-error.log"
+
+        st.sidebar.markdown("**Chroma init log (tail)**")
+        st.sidebar.code(_tail(log_path, 300), language="text")
+
+        st.sidebar.markdown("**.chroma directory (top-level)**")
+        chroma_dir = Path(".chroma")
+        if chroma_dir.exists():
+            # show up to 200 items to avoid long outputs
+            entries = []
+            for p in sorted(chroma_dir.glob("**/*")):
+                try:
+                    rel = p.relative_to(Path.cwd())
+                except Exception:
+                    rel = p
+                if p.is_file():
+                    entries.append(f"{rel}  {p.stat().st_size} bytes")
+                else:
+                    entries.append(f"{rel}/")
+            st.sidebar.text("\n".join(entries[:200]))
+        else:
+            st.sidebar.text(".chroma not found")
+
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("**Reset .chroma (backup then delete)**")
+        if st.sidebar.button("Backup & Reset .chroma"):
+            try:
+                ts = int(time.time())
+                backup_path = f"/tmp/chroma_backup_{ts}"
+                if chroma_dir.exists():
+                    shutil.copytree(chroma_dir, backup_path)
+                shutil.rmtree(chroma_dir, ignore_errors=True)
+                st.sidebar.success(f"Backed up to {backup_path} and removed .chroma. App will reload.")
+                time.sleep(0.6)
+                st.experimental_rerun()
+            except Exception as ex:
+                st.sidebar.error(f"Reset failed: {ex}")
+    except Exception as outer_e:
+        # do not crash the app for admin UI errors
+        try:
+            st.sidebar.error(f"Chroma admin UI failed: {outer_e}")
+        except Exception:
+            pass
+
 TEXT_EXTS = {".txt", ".md", ".rtf", ".html", ".htm", ".json", ".xml"}
 DOC_EXTS  = {".pdf", ".docx", ".csv", ".tsv", ".xlsx", ".xlsm", ".xltx", ".pptx"}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
@@ -1029,7 +1098,9 @@ def main():
     with st.sidebar:
         logo_path = _resolve_logo_path()
         if logo_path:
-            st_image_compat(str(logo_path), caption="iSOFT ANZ Pvt Ltd", use_column_width=True)
+            st_image_compat(str(logo_path)        # Chroma admin helper
+        show_chroma_admin_ui()
+, caption="iSOFT ANZ Pvt Ltd", use_column_width=True)
         st.subheader("⚙️ Settings")
         st.caption("Auto-index is enabled. Edit paths/models below if needed.")
 
