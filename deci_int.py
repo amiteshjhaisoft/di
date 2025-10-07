@@ -313,9 +313,15 @@ DEFAULT_OLLAMA = "llama3.2:1b-instruct-q4_K_M"
 DEFAULT_CLAUDE = "claude-4-5"
 
 
+def _strip_proxy_env():
+    # Remove proxy env vars so older Anthropic init paths can't inject them
+    for v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        os.environ.pop(v, None)
+
+
 def make_llm(backend: str, model_name: str, temperature: float):
     if backend.startswith("Claude"):
-        # Build Anthropic client explicitly to avoid env-injected unsupported kwargs (e.g., 'proxies')
+        _strip_proxy_env()
         client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         return ChatAnthropic(client=client, model=model_name, temperature=temperature, max_tokens=800)
     # Ollama (local)
