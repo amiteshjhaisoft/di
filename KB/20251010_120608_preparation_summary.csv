@@ -1,0 +1,8 @@
+Metric,Value
+Inferred frequency,D
+Effective frequency,W
+Index monotonic ↑,True
+Duplicate timestamps,0
+Pattern,additive
+Seasonal period guess (m),52
+Missing values (prepared series),0

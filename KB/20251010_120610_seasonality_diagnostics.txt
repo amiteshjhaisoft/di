@@ -1,0 +1,7 @@
+# seasonality_diagnostics
+
+Table captured from block **seasonality_diagnostics**.
+
+Rows: 5
+
+Columns: metric, value

@@ -1,0 +1,7 @@
+# component_summaries
+
+Table captured from block **component_summaries**.
+
+Rows: 4
+
+Columns: component, mean, std

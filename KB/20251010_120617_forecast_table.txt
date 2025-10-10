@@ -1,0 +1,7 @@
+# forecast_table
+
+Table captured from block **forecast_table**.
+
+Rows: 12
+
+Columns: yhat, lo80, hi80

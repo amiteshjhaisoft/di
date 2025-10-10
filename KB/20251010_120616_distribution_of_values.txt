@@ -1,0 +1,7 @@
+# distribution_of_values
+
+Table captured from block **distribution_of_values**.
+
+Rows: 9
+
+Columns: Metric, Value

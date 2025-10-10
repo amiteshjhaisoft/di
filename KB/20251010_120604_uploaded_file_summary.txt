@@ -1,0 +1,7 @@
+# uploaded_file_summary
+
+Table captured from block **uploaded_file_summary**.
+
+Rows: 11
+
+Columns: Item, Value

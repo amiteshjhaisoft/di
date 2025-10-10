@@ -1,0 +1,7 @@
+# preparation_summary
+
+Table captured from block **preparation_summary**.
+
+Rows: 7
+
+Columns: Metric, Value

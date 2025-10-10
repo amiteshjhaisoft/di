@@ -1,0 +1,7 @@
+# partial_autocorrelation_top_lags
+
+Table captured from block **partial_autocorrelation_top_lags**.
+
+Rows: 26
+
+Columns: lag, pacf

@@ -1,0 +1,7 @@
+# residuals_summary
+
+Table captured from block **residuals_summary**.
+
+Rows: 5
+
+Columns: Metric, Value

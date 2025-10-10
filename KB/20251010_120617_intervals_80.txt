@@ -1,0 +1,7 @@
+# intervals_80
+
+Table captured from block **intervals_80**.
+
+Rows: 12
+
+Columns: lo80, yhat, hi80

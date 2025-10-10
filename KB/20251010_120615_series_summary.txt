@@ -1,0 +1,7 @@
+# series_summary
+
+Table captured from block **series_summary**.
+
+Rows: 5
+
+Columns: Metric, Value

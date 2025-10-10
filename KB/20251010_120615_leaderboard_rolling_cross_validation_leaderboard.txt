@@ -1,0 +1,7 @@
+# leaderboard_rolling_cross_validation_leaderboard
+
+Table captured from block **leaderboard_rolling_cross_validation_leaderboard**.
+
+Rows: 2
+
+Columns: model, folds, MAE, RMSE, MAPE, MASE, sMAPE

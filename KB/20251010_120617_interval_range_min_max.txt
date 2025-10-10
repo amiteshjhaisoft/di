@@ -1,0 +1,7 @@
+# interval_range_min_max
+
+Table captured from block **interval_range_min_max**.
+
+Rows: 2
+
+Columns: min, max

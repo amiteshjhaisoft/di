@@ -1,0 +1,7 @@
+# series_overview
+
+Table captured from block **series_overview**.
+
+Rows: 192
+
+Columns: y

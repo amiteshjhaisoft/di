@@ -1,0 +1,7 @@
+# autocorrelation
+
+Table captured from block **autocorrelation**.
+
+Rows: 3
+
+Columns: top lag, ACF

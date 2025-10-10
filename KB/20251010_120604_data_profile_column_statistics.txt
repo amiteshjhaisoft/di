@@ -1,0 +1,7 @@
+# data_profile_column_statistics
+
+Table captured from block **data_profile_column_statistics**.
+
+Rows: 16
+
+Columns: Column, Dtype, Count, Missing, Pct_missing, Unique, Mean, Median, Mode, Std_dev, Min, Max

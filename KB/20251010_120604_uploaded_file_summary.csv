@@ -1,0 +1,12 @@
+Item,Value
+🗂️ File Name,forecast360_fake_retail_daily_multi_sku_SEASONAL.csv
+🧾 Type,CSV
+🔢 Columns (original),16
+📊 Rows (original),"32,136"
+🔢 Columns (after cleaning),16
+📊 Rows (after cleaning),"32,136"
+➖ Rows removed (invalid/dupes),0 (0.0%)
+🔎 Row-drop breakdown,
+• Unparseable dates,0  (—; 0.0% of original)
+• Non-numeric target,0  (—; 0.0% of original)
+• Exact-duplicate rows removed,0  (—; 0.0% of original)

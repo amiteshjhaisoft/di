@@ -1,0 +1,7 @@
+# correlation_matrix
+
+Table captured from block **correlation_matrix**.
+
+Rows: 11
+
+Columns: sales, promo_flag, holiday_flag, payday_flag, school_holiday_flag, price_index, competitor_price_index, marketing_spend, temperature_c, foot_traffic, stockout_flag
