@@ -1,7 +1,0 @@
-# descriptive_statistics_sales
-
-Table captured from block **descriptive_statistics_sales**.
-
-Rows: 10
-
-Columns: stat, value
