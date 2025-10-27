@@ -686,7 +686,7 @@ def main():
     render_sidebar()
 
     # --- Title with icon from assets/llm.png ---
-    header_with_icon("Chat with your Knowledge Base (LangChain RAG)", icon_path="assets/llm.png", height_px=22)
+    header_with_icon("AI Agent", icon_path="assets/llm.png", height_px=22)
 
     hero_status = st.container()
     vs = auto_index_if_needed(status_placeholder=hero_status)
