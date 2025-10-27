@@ -1,9 +1,9 @@
-# Author: Amitesh Jha | iSoft | 2025-10-07 (Refactored: Gemini)
+# Author: Amitesh Jha | iSoft | 2025-10-07 (Refactored)
 # Streamlit + LangChain RAG app — CPU-safe embeddings + Anthropic proxies-proof init.
+
 from __future__ import annotations
 
-import os, glob, time, base64, hashlib, logging, shutil
-import re
+import os, glob, time, base64, hashlib, shutil, logging, re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
@@ -15,6 +15,25 @@ import pandas as pd
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")            # force no CUDA
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
+# ---- Streamlit page config (once) ----
+st.set_page_config(
+    page_title="LLM Chat • LangChain RAG",
+    page_icon="💬",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+# --- Force-hide the sidebar & the collapse control ---
+HIDE_SIDEBAR_CSS = """
+<style>
+section[data-testid="stSidebar"] { display: none !important; }
+div[data-testid="stSidebar"] { display: none !important; }
+button[kind="header"], [data-testid="collapsedControl"] { display: none !important; }
+main.block-container { padding-left: 1rem; padding-right: 1rem; }
+</style>
+"""
+st.markdown(HIDE_SIDEBAR_CSS, unsafe_allow_html=True)
 
 # LangChain bits (FAISS build)
 from langchain_community.vectorstores import FAISS
@@ -29,6 +48,8 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_community.document_loaders import (
     PyPDFLoader, BSHTMLLoader, Docx2txtLoader, CSVLoader, UnstructuredPowerPointLoader
 )
+
+# Ollama (chat first, fallback to LLM)
 try:
     from langchain_community.chat_models import ChatOllama
 except Exception:
@@ -44,9 +65,9 @@ try:
 except Exception:
     _AnthropicClientOld = None
 
-# Constants & Settings
+# --------------------- Constants & Settings ---------------------
 DEFAULT_OLLAMA = "llama3.2"
-DEFAULT_CLAUDE = "claude-sonnet-4-5"
+DEFAULT_CLAUDE = "claude-3-5-sonnet-20240620"  # stable public name
 _EMB_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 _EMB_MODEL_KW = {"device": "cpu", "trust_remote_code": False}
 _ENCODE_KW = {"normalize_embeddings": True}
@@ -89,7 +110,7 @@ class ClaudeDirect(BaseChatModel):
     def _convert_msgs(self, messages: list[BaseMessage]):
         out = []
         for m in messages:
-            role = "user" if m.type == "human" else ("assistant" if m.type == "ai" else "user")
+            role = "user" if getattr(m, "type", "") == "human" else ("assistant" if getattr(m, "type", "") == "ai" else "user")
             if isinstance(m.content, str):
                 text = m.content
             else:
@@ -114,25 +135,10 @@ class ClaudeDirect(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=ai)])
 
 def build_citation_block(source_docs: List[Document], kb_root: str | None = None) -> str:
-    if not source_docs:
-        return ""
-    from collections import Counter
-    names = []
-    for d in source_docs:
-        meta = getattr(d, "metadata", {}) or {}
-        src = meta.get("source", "unknown")
-        try:
-            display = str(Path(src).resolve().relative_to(Path(kb_root).resolve())) if kb_root else Path(src).name
-        except Exception:
-            display = Path(src).name
-        names.append(display)
-    counts = Counter(names)
-    lines = [f"- {name}" + (f" ×{n}" if n > 1 else "") for name, n in counts.items()]
-    # return "\n\n**Sources**\n" + "\n".join(lines)
+    # Citations intentionally suppressed per requirement.
     return ""
-# --------------------- UI / THEME ---------------------
-st.set_page_config(page_title="LLM Chat • LangChain RAG", page_icon="💬", layout="wide")
 
+# --------------------- UI / THEME ---------------------
 def _resolve_logo_path() -> Optional[Path]:
     env_logo = os.getenv("ISOFT_LOGO_PATH")
     candidates = [Path.cwd() / "assets" / "isoft_logo.png",
@@ -196,25 +202,6 @@ main .block-container{{ padding-top:.6rem; }}
 </style>
 """
 st.markdown(css, unsafe_allow_html=True)
-
-st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
-
-# --- Force-hide the sidebar & the collapse control ---
-HIDE_SIDEBAR_CSS = """
-<style>
-/* Hide the sidebar and its container */
-section[data-testid="stSidebar"] { display: none !important; }
-div[data-testid="stSidebar"] { display: none !important; }
-
-/* Hide the floating collapse/expand chevron */
-button[kind="header"], [data-testid="collapsedControl"] { display: none !important; }
-
-/* Make the main area use the full width */
-main.block-container { padding-left: 1rem; padding-right: 1rem; }
-</style>
-"""
-st.markdown(HIDE_SIDEBAR_CSS, unsafe_allow_html=True)
-
 
 # --------------------- Helpers ---------------------
 def get_kb_dir() -> str:
@@ -373,11 +360,9 @@ def index_folder_langchain(folder: str, persist_dir: str, collection_name: str,
     )
     splat = splitter.split_documents(raw_docs)
     embeddings = _make_embeddings()
-
     faiss_db = FAISS.from_documents(documents=splat, embedding=embeddings)
 
     faiss_dir.mkdir(parents=True, exist_ok=True)
-    # Save as folder (compatible with current LC versions)
     faiss_db.save_local(str(faiss_dir))
     return (len(raw_docs), len(splat))
 
@@ -532,7 +517,7 @@ def auto_index_if_needed(status_placeholder: Optional[object] = None) -> Optiona
     except Exception:
         return None
 
-# --------------------- UI Functions ---------------------
+# --------------------- (Optional) Sidebar Settings (hidden by CSS) ---------------------
 def render_sidebar():
     with st.sidebar:
         lp = _resolve_logo_path()
@@ -599,8 +584,10 @@ def handle_user_input(query: str, vs: Optional[VectorStoreType]):
         if len(full_text) > 8000:
             try:
                 llm, _, _ = make_llm_and_chain(vs or FAISS.from_texts([""], _make_embeddings()))
-                summary = llm.predict(f"Summarize the following document comprehensively:\n\n{full_text[:180000]}")
-                reply = f"**Full-document summary for:** {', '.join(Path(p).name for p in files)}\n\n{summary}"
+                summary = llm.invoke(f"Summarize the following document comprehensively:\n\n{full_text[:180000]}")
+                # llm.invoke may return a str or a message-like object depending on model; normalize:
+                summary_text = summary if isinstance(summary, str) else getattr(summary, "content", str(summary))
+                reply = f"**Full-document summary for:** {', '.join(Path(p).name for p in files)}\n\n{summary_text}"
             except Exception as e:
                 reply = f"Loaded the full document but failed to summarize: {e}\n\n--- RAW BEGIN ---\n{full_text[:20000]}\n--- RAW TRUNCATED ---"
         else:
@@ -639,6 +626,7 @@ def main():
     for k, v in settings_defaults().items():
         st.session_state.setdefault(k, v)
 
+    # Sidebar is rendered (for config) but hidden by CSS above
     render_sidebar()
 
     st.markdown("### 💬 Chat with your Knowledge Base (LangChain RAG)")
