@@ -20,7 +20,7 @@ os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 st.set_page_config(
     page_title="LLM Chat • LangChain RAG",
     page_icon="💬",
-    layout="wide",
+    layout="centered",
     initial_sidebar_state="collapsed",
 )
 
