@@ -1,24 +1,56 @@
 # Author: Amitesh Jha | iSoft | 2025-10-07 (Refactored)
 # Streamlit + LangChain RAG app — CPU-safe embeddings + Anthropic proxies-proof init.
 
-from __future__ import annotations
-
-import os, glob, time, base64, hashlib, shutil, logging, re
+# --- Stdlib ---
+import os, glob, time, base64, hashlib, shutil, re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 
+# --- Third-party ---
 import streamlit as st
 import pandas as pd
+from PIL import Image
+
+# LangChain / loaders
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import Document
+from langchain.chains import ConversationalRetrievalChain
+from langchain.memory import ConversationBufferMemory
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_community.document_loaders import (
+    PyPDFLoader, BSHTMLLoader, Docx2txtLoader, CSVLoader, UnstructuredPowerPointLoader
+)
+
+# Ollama (chat first, fallback to LLM)
+try:
+    from langchain_community.chat_models import ChatOllama
+except Exception:
+    from langchain_community.llms import Ollama as ChatOllama
+
+# Anthropic SDK (new & old)
+try:
+    from anthropic import Anthropic as _AnthropicClientNew
+except Exception:
+    _AnthropicClientNew = None
+try:
+    from anthropic import Client as _AnthropicClientOld
+except Exception:
+    _AnthropicClientOld = None
+
 
 # --- Torch / device hygiene to avoid meta-tensor issues ---
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")            # force no CUDA
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
-from pathlib import Path
-from PIL import Image
-import streamlit as st
+# from pathlib import Path
+# from PIL import Image
+# import streamlit as st
 
 def _page_icon():
     p = Path("assets/logo.png")
@@ -48,34 +80,34 @@ main.block-container { padding-left: 1rem; padding-right: 1rem; }
 st.markdown(HIDE_SIDEBAR_CSS, unsafe_allow_html=True)
 
 # LangChain bits (FAISS build)
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferMemory
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
-from langchain_community.document_loaders import (
-    PyPDFLoader, BSHTMLLoader, Docx2txtLoader, CSVLoader, UnstructuredPowerPointLoader
-)
+# from langchain_community.vectorstores import FAISS
+# from langchain_community.embeddings import HuggingFaceEmbeddings
+# from langchain.text_splitter import RecursiveCharacterTextSplitter
+# from langchain.schema import Document
+# from langchain.chains import ConversationalRetrievalChain
+# from langchain.memory import ConversationBufferMemory
+# from langchain_core.language_models.chat_models import BaseChatModel
+# from langchain_core.messages import AIMessage, BaseMessage
+# from langchain_core.outputs import ChatGeneration, ChatResult
+# from langchain_community.document_loaders import (
+#     PyPDFLoader, BSHTMLLoader, Docx2txtLoader, CSVLoader, UnstructuredPowerPointLoader
+# )
 
-# Ollama (chat first, fallback to LLM)
-try:
-    from langchain_community.chat_models import ChatOllama
-except Exception:
-    from langchain_community.llms import Ollama as ChatOllama
+# # Ollama (chat first, fallback to LLM)
+# try:
+#     from langchain_community.chat_models import ChatOllama
+# except Exception:
+#     from langchain_community.llms import Ollama as ChatOllama
 
-# Anthropic SDK (new & old)
-try:
-    from anthropic import Anthropic as _AnthropicClientNew
-except Exception:
-    _AnthropicClientNew = None
-try:
-    from anthropic import Client as _AnthropicClientOld
-except Exception:
-    _AnthropicClientOld = None
+# # Anthropic SDK (new & old)
+# try:
+#     from anthropic import Anthropic as _AnthropicClientNew
+# except Exception:
+#     _AnthropicClientNew = None
+# try:
+#     from anthropic import Client as _AnthropicClientOld
+# except Exception:
+#     _AnthropicClientOld = None
 
 # --------------------- Constants & Settings ---------------------
 DEFAULT_OLLAMA = "llama3.2"
