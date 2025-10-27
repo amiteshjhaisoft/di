@@ -62,7 +62,7 @@ def _page_icon():
     return "💬"                     # final fallback
 
 st.set_page_config(
-    page_title="LLM Chat • LangChain RAG",
+    page_title="AI Agent",
     page_icon=_page_icon(),
     layout="centered",
     initial_sidebar_state="collapsed",
@@ -665,7 +665,19 @@ def handle_user_input(query: str, vs: Optional[VectorStoreType]):
 
     st.session_state["messages"].append({"role": "assistant", "content": msg})
     st.rerun()
-
+    
+def header_with_icon(title: str = "AI Agent", icon_path: str = "assets/llm.png", height_px: int = 22):
+    p = Path(icon_path)
+    if p.exists():
+        b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+        icon_html = f"<img src='data:image/png;base64,{b64}' style='height:{height_px}px;vertical-align:-4px;margin-right:8px;'>"
+    else:
+        icon_html = "🤖 "  # fallback
+    st.markdown(
+        f"{icon_html}<span style='font-weight:600;font-size:1.15rem;'>{title}</span>",
+        unsafe_allow_html=True,
+    )
+    
 def main():
     for k, v in settings_defaults().items():
         st.session_state.setdefault(k, v)
@@ -673,11 +685,15 @@ def main():
     # Sidebar is rendered (for config) but hidden by CSS above
     render_sidebar()
 
-    st.markdown("### 💬 Chat with your Knowledge Base (LangChain RAG)")
+    # --- Title with icon from assets/llm.png ---
+    header_with_icon("Chat with your Knowledge Base (LangChain RAG)", icon_path="assets/llm.png", height_px=22)
+
     hero_status = st.container()
     vs = auto_index_if_needed(status_placeholder=hero_status)
 
-    st.session_state.setdefault("messages", [{"role": "assistant", "content": "Hi! Ask anything about your Knowledge Base."}])
+    st.session_state.setdefault("messages", [
+        {"role": "assistant", "content": "Hi! Ask anything about your Knowledge Base."}
+    ])
 
     st.markdown('<div class="chat-card">', unsafe_allow_html=True)
     st.markdown('<div class="chat-scroll">', unsafe_allow_html=True)
@@ -688,6 +704,10 @@ def main():
     user_text = st.chat_input("Type your question...", key="user_prompt_input")
     st.markdown("</div>", unsafe_allow_html=True)  # End composer
     st.markdown("</div>", unsafe_allow_html=True)  # End chat-card
+
+    if user_text and user_text.strip():
+        handle_user_input(user_text.strip(), vs)
+
 
     if user_text and user_text.strip():
         handle_user_input(user_text.strip(), vs)
