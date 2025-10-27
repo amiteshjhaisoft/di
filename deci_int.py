@@ -53,7 +53,7 @@ os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 # import streamlit as st
 
 def _page_icon():
-    p = Path("assets/logo.png")
+    p = Path("assets/llm.png")
     if p.exists():
         try:
             return Image.open(p)   # preferred: PIL image
