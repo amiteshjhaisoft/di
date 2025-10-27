@@ -67,7 +67,7 @@ except Exception:
 
 # --------------------- Constants & Settings ---------------------
 DEFAULT_OLLAMA = "llama3.2"
-DEFAULT_CLAUDE = "claude-3-5-sonnet-20240620"  # stable public name
+DEFAULT_CLAUDE = "claude-sonnet-4-5"  # stable public name
 _EMB_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 _EMB_MODEL_KW = {"device": "cpu", "trust_remote_code": False}
 _ENCODE_KW = {"normalize_embeddings": True}
