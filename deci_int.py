@@ -48,10 +48,6 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")            # force no CUDA
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
-# from pathlib import Path
-# from PIL import Image
-# import streamlit as st
-
 def _page_icon():
     p = Path("assets/llm.png")
     if p.exists():
@@ -78,36 +74,6 @@ main.block-container { padding-left: 1rem; padding-right: 1rem; }
 </style>
 """
 st.markdown(HIDE_SIDEBAR_CSS, unsafe_allow_html=True)
-
-# LangChain bits (FAISS build)
-# from langchain_community.vectorstores import FAISS
-# from langchain_community.embeddings import HuggingFaceEmbeddings
-# from langchain.text_splitter import RecursiveCharacterTextSplitter
-# from langchain.schema import Document
-# from langchain.chains import ConversationalRetrievalChain
-# from langchain.memory import ConversationBufferMemory
-# from langchain_core.language_models.chat_models import BaseChatModel
-# from langchain_core.messages import AIMessage, BaseMessage
-# from langchain_core.outputs import ChatGeneration, ChatResult
-# from langchain_community.document_loaders import (
-#     PyPDFLoader, BSHTMLLoader, Docx2txtLoader, CSVLoader, UnstructuredPowerPointLoader
-# )
-
-# # Ollama (chat first, fallback to LLM)
-# try:
-#     from langchain_community.chat_models import ChatOllama
-# except Exception:
-#     from langchain_community.llms import Ollama as ChatOllama
-
-# # Anthropic SDK (new & old)
-# try:
-#     from anthropic import Anthropic as _AnthropicClientNew
-# except Exception:
-#     _AnthropicClientNew = None
-# try:
-#     from anthropic import Client as _AnthropicClientOld
-# except Exception:
-#     _AnthropicClientOld = None
 
 # --------------------- Constants & Settings ---------------------
 DEFAULT_OLLAMA = "llama3.2"
