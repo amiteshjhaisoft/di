@@ -16,10 +16,22 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")            # force no CUDA
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
-# ---- Streamlit page config (once) ----
+from pathlib import Path
+from PIL import Image
+import streamlit as st
+
+def _page_icon():
+    p = Path("assets/logo.png")
+    if p.exists():
+        try:
+            return Image.open(p)   # preferred: PIL image
+        except Exception:
+            return str(p)          # fallback: path string
+    return "💬"                     # final fallback
+
 st.set_page_config(
     page_title="LLM Chat • LangChain RAG",
-    page_icon="💬",
+    page_icon=_page_icon(),
     layout="centered",
     initial_sidebar_state="collapsed",
 )
