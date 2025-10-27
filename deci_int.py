@@ -197,6 +197,25 @@ main .block-container{{ padding-top:.6rem; }}
 """
 st.markdown(css, unsafe_allow_html=True)
 
+st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
+
+# --- Force-hide the sidebar & the collapse control ---
+HIDE_SIDEBAR_CSS = """
+<style>
+/* Hide the sidebar and its container */
+section[data-testid="stSidebar"] { display: none !important; }
+div[data-testid="stSidebar"] { display: none !important; }
+
+/* Hide the floating collapse/expand chevron */
+button[kind="header"], [data-testid="collapsedControl"] { display: none !important; }
+
+/* Make the main area use the full width */
+main.block-container { padding-left: 1rem; padding-right: 1rem; }
+</style>
+"""
+st.markdown(HIDE_SIDEBAR_CSS, unsafe_allow_html=True)
+
+
 # --------------------- Helpers ---------------------
 def get_kb_dir() -> str:
     kb = os.path.abspath(os.path.join(".", "KB"))
